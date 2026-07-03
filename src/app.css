@@ -223,6 +223,57 @@ button:disabled {
   animation: fadeIn 180ms ease;
 }
 
+.video-preview-status,
+.video-preview-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  width: min(100%, 520px);
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+.video-preview-fallback {
+  color: var(--text);
+}
+
+.video-preview-poster {
+  width: min(100%, 420px);
+  max-height: 50vh;
+  object-fit: contain;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.video-preview-copy p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.preview-file-name {
+  color: var(--muted);
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.video-preview-hint {
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: center;
+  pointer-events: none;
+}
+
 .screenshot-demo.layout-sidebar .workspace {
   padding: 0;
 }

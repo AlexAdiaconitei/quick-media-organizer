@@ -1,6 +1,6 @@
 {
   "name": "quick-media-organizer",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Organize photo and video folders quickly with keyboard shortcuts",
   "type": "module",
   "scripts": {

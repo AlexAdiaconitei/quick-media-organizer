@@ -1,8 +1,10 @@
 use crate::models::{MediaItem, MediaKind, SortMode};
-use crate::path_util::IGNORED_FOLDER_NAMES;
-use chrono::{DateTime, NaiveDateTime, Utc};
-use std::collections::{HashMap, HashSet};
-use std::fs;
+use crate::path_util::{is_path_in_ignored_dir, IGNORED_FOLDER_NAMES};
+use chrono::{DateTime, Utc};
+use rayon::prelude::*;
+use std::collections::HashMap;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -97,7 +99,7 @@ pub fn scan_folder(root: &Path, recursive: bool) -> Result<Vec<MediaItem>, Strin
             }
 
             let path = entry.path();
-            if is_ignored_path(root, path) {
+            if is_path_in_ignored_dir(root, path) {
                 continue;
             }
 
@@ -119,19 +121,129 @@ pub fn scan_folder(root: &Path, recursive: bool) -> Result<Vec<MediaItem>, Strin
     Ok(grouped)
 }
 
-fn is_ignored_path(root: &Path, path: &Path) -> bool {
-    if let Ok(relative) = path.strip_prefix(root) {
-        for component in relative.components() {
-            if let std::path::Component::Normal(name) = component {
-                if let Some(name) = name.to_str() {
-                    if IGNORED_DIRS.contains(&name) {
-                        return true;
-                    }
-                }
-            }
+pub fn build_media_item_from_paths(path_strs: &[String]) -> MediaItem {
+    let paths: Vec<PathBuf> = path_strs.iter().map(PathBuf::from).collect();
+    let kind = if paths.len() >= 2 && detect_live_photo_pair(&paths).is_some() {
+        MediaKind::LivePhoto
+    } else {
+        MediaKind::Single
+    };
+    build_media_item_fast(&paths, kind)
+}
+
+pub fn enrich_exif_dates_for_sort(items: &mut [MediaItem]) {
+    items.par_iter_mut().for_each(|item| {
+        if item.is_video || item.exif_date.is_some() {
+            return;
         }
+        let primary = PathBuf::from(&item.paths[0]);
+        item.exif_date = read_exif_date_only(&primary);
+    });
+}
+
+pub fn prepare_sorted_items(items: &mut Vec<MediaItem>, mode: SortMode) {
+    if mode == SortMode::ExifDate {
+        enrich_exif_dates_for_sort(items);
     }
-    false
+    sort_items(items, mode);
+}
+
+pub fn enrich_item_metadata(item: &mut MediaItem) {
+    if item.exif_date.is_some() && item.width.is_some() && item.height.is_some() {
+        return;
+    }
+
+    let primary = PathBuf::from(&item.paths[0]);
+    if item.is_video {
+        return;
+    }
+
+    let exif = read_exif_fields(&primary);
+    if item.exif_date.is_none() {
+        item.exif_date = exif.exif_date;
+    }
+    if item.width.is_none() {
+        item.width = exif.width;
+    }
+    if item.height.is_none() {
+        item.height = exif.height;
+    }
+}
+
+pub fn refresh_item_size(item: &mut MediaItem) {
+    item.size_bytes = item
+        .paths
+        .iter()
+        .filter_map(|path| fs::metadata(path).ok())
+        .map(|meta| meta.len())
+        .sum();
+}
+
+pub fn diagnose_media_file(path: &Path) -> crate::models::MediaFileDiagnosis {
+    let size_bytes = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+
+    if size_bytes == 0 {
+        return crate::models::MediaFileDiagnosis {
+            issue: "empty".into(),
+            size_bytes,
+        };
+    }
+
+    let mut header = [0u8; 16];
+    let read_len = File::open(path)
+        .and_then(|mut file| file.read(&mut header))
+        .unwrap_or(0);
+
+    if read_len < 4 {
+        return crate::models::MediaFileDiagnosis {
+            issue: "too_small".into(),
+            size_bytes,
+        };
+    }
+
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if matches!(extension.as_str(), "jpg" | "jpeg") && !looks_like_jpeg(&header) {
+        return crate::models::MediaFileDiagnosis {
+            issue: "content_mismatch".into(),
+            size_bytes,
+        };
+    }
+
+    if extension == "png" && header[0..4] != [0x89, 0x50, 0x4E, 0x47] {
+        return crate::models::MediaFileDiagnosis {
+            issue: "content_mismatch".into(),
+            size_bytes,
+        };
+    }
+
+    if matches!(extension.as_str(), "heic" | "heif") && !looks_like_heif(&header) {
+        return crate::models::MediaFileDiagnosis {
+            issue: "content_mismatch".into(),
+            size_bytes,
+        };
+    }
+
+    crate::models::MediaFileDiagnosis {
+        issue: "unknown".into(),
+        size_bytes,
+    }
+}
+
+fn looks_like_jpeg(header: &[u8]) -> bool {
+    header.len() >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF
+}
+
+fn looks_like_heif(header: &[u8]) -> bool {
+    header.len() >= 12 && &header[4..8] == b"ftyp"
+}
+
+fn is_ignored_path(root: &Path, path: &Path) -> bool {
+    is_path_in_ignored_dir(root, path)
 }
 
 fn is_supported_file(path: &Path) -> bool {
@@ -152,10 +264,6 @@ fn group_key(path: &Path) -> String {
     format!("{parent}|{stem}")
 }
 
-fn path_id(path: &Path) -> String {
-    path.to_string_lossy().to_string()
-}
-
 fn group_live_photos(files: &[PathBuf]) -> Vec<MediaItem> {
     let mut groups: HashMap<String, Vec<PathBuf>> = HashMap::new();
 
@@ -166,33 +274,28 @@ fn group_live_photos(files: &[PathBuf]) -> Vec<MediaItem> {
             .push(path.clone());
     }
 
-    let mut processed = HashSet::new();
     let mut items = Vec::new();
+    let mut seen_groups = std::collections::HashSet::new();
 
     for path in files {
-        if processed.contains(&path_id(path)) {
+        let key = group_key(path);
+        if !seen_groups.insert(key.clone()) {
             continue;
         }
 
-        let key = group_key(path);
-        let group = groups.get(&key).cloned().unwrap_or_else(|| vec![path.clone()]);
-        let mut pending: Vec<PathBuf> = group
-            .iter()
-            .filter(|candidate| !processed.contains(&path_id(candidate)))
-            .cloned()
-            .collect();
-
-        if let Some(pair) = detect_live_photo_pair(&pending) {
-            for candidate in &pair {
-                processed.insert(path_id(candidate));
+        let group = groups.remove(&key).unwrap_or_default();
+        let pair = detect_live_photo_pair(&group);
+        if let Some(pair) = pair {
+            items.push(build_media_item_fast(&pair, MediaKind::LivePhoto));
+            let paired: std::collections::HashSet<_> = pair.iter().collect();
+            for candidate in group {
+                if !paired.contains(&candidate) {
+                    items.push(build_media_item_fast(&[candidate], MediaKind::Single));
+                }
             }
-            items.push(build_media_item(&pair, MediaKind::LivePhoto));
-            pending.retain(|candidate| !pair.iter().any(|paired| paired == candidate));
-        }
-
-        for candidate in pending {
-            if processed.insert(path_id(&candidate)) {
-                items.push(build_media_item(&[candidate], MediaKind::Single));
+        } else {
+            for candidate in group {
+                items.push(build_media_item_fast(&[candidate], MediaKind::Single));
             }
         }
     }
@@ -228,7 +331,7 @@ fn detect_live_photo_pair(group: &[PathBuf]) -> Option<Vec<PathBuf>> {
     }
 }
 
-fn build_media_item(paths: &[PathBuf], kind: MediaKind) -> MediaItem {
+fn build_media_item_fast(paths: &[PathBuf], kind: MediaKind) -> MediaItem {
     let primary = &paths[0];
     let file_name = primary
         .file_name()
@@ -241,50 +344,52 @@ fn build_media_item(paths: &[PathBuf], kind: MediaKind) -> MediaItem {
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    let meta = read_file_metadata(primary);
-    let size_bytes = paths
-        .iter()
-        .filter_map(|p| fs::metadata(p).ok())
-        .map(|m| m.len())
-        .sum();
+    let mut modified_at = None;
+    let mut size_bytes = 0u64;
+    for path in paths {
+        if let Ok(meta) = fs::metadata(path) {
+            size_bytes += meta.len();
+            if path == primary {
+                modified_at = meta.modified().ok().map(|t| {
+                    DateTime::<Utc>::from(t)
+                        .format("%Y-%m-%d %H:%M:%S")
+                        .to_string()
+                });
+            }
+        }
+    }
 
     MediaItem {
         id: primary.to_string_lossy().to_string(),
         paths: paths.iter().map(|p| p.to_string_lossy().to_string()).collect(),
         file_name,
-        extension,
-        exif_date: meta.exif_date,
-        modified_at: meta.modified_at,
+        extension: extension.clone(),
+        exif_date: None,
+        modified_at,
         size_bytes,
-        is_video: is_video_extension(
-            primary
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or_default(),
-        ),
+        is_video: is_video_extension(&extension),
         kind,
-        width: meta.width,
-        height: meta.height,
+        width: None,
+        height: None,
     }
 }
 
-struct FileMeta {
+struct ExifFields {
     exif_date: Option<String>,
-    modified_at: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
 }
 
-fn read_file_metadata(path: &Path) -> FileMeta {
-    let modified_at = fs::metadata(path)
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .map(|t| {
-            DateTime::<Utc>::from(t)
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string()
-        });
+fn read_exif_date_only(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let exif = exif::Reader::new()
+        .read_from_container(&mut std::io::BufReader::new(file))
+        .ok()?;
+    exif.get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY)
+        .map(|field| field.display_value().to_string())
+}
 
+fn read_exif_fields(path: &Path) -> ExifFields {
     let mut exif_date = None;
     let mut width = None;
     let mut height = None;
@@ -304,12 +409,15 @@ fn read_file_metadata(path: &Path) -> FileMeta {
         }
     }
 
-    FileMeta {
+    ExifFields {
         exif_date,
-        modified_at,
         width,
         height,
     }
+}
+
+fn sort_date(item: &MediaItem) -> Option<&String> {
+    item.exif_date.as_ref().or(item.modified_at.as_ref())
 }
 
 pub fn sort_items(items: &mut [MediaItem], mode: SortMode) {
@@ -319,18 +427,10 @@ pub fn sort_items(items: &mut [MediaItem], mode: SortMode) {
             .modified_at
             .cmp(&b.modified_at)
             .then(a.file_name.cmp(&b.file_name)),
-        SortMode::ExifDate => a
-            .exif_date
-            .cmp(&b.exif_date)
+        SortMode::ExifDate => sort_date(a)
+            .cmp(&sort_date(b))
             .then(a.file_name.cmp(&b.file_name)),
     });
-}
-
-pub fn parse_sortable_date(value: &Option<String>) -> Option<NaiveDateTime> {
-    let value = value.as_ref()?;
-    NaiveDateTime::parse_from_str(value, "%Y:%m:%d %H:%M:%S")
-        .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S"))
-        .ok()
 }
 
 #[cfg(test)]

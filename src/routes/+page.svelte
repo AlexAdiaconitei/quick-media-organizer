@@ -39,6 +39,7 @@
   let dontShowAgain = $state(false);
   let renameValue = $state("");
   let showMetadata = $state(true);
+  let videoWithSound = $state(false);
   let layoutMode = $state<LayoutMode>("sidebar");
   let showFolderPicker = $state(false);
   let showOptions = $state(false);
@@ -109,6 +110,11 @@
       !appState.session_complete,
   );
 
+  const workspaceDisabled = $derived(
+    showWelcome || !appState.folder_path || !hasWorkspace || actionInFlight,
+  );
+  const chromeDisabled = $derived(showWelcome || actionInFlight);
+
   const showSessionComplete = $derived(
     !showWelcome &&
       !!appState.folder_path &&
@@ -129,6 +135,7 @@
   $effect(() => {
     const _metadata = showMetadata;
     const _layout = layoutMode;
+    const _videoSound = videoWithSound;
     if (skipUiPersist) return;
     void persistUiPreferences();
   });
@@ -176,6 +183,7 @@
       locale = settings.locale === "es" ? "es" : detectLocale();
       showWelcome = !settings.first_run_completed;
       showMetadata = settings.show_metadata ?? true;
+      videoWithSound = settings.video_with_sound ?? false;
       layoutMode = settings.layout_mode ?? "sidebar";
       appState = await invokeLogged<FrontendState>("get_state");
       await refreshErrorLogMeta();
@@ -478,6 +486,7 @@
       await invokeLogged<AppSettings>("set_ui_preferences", {
         layoutMode,
         showMetadata,
+        videoWithSound,
       });
     } catch (error) {
       showToast(String(error), true, 8000);
@@ -724,6 +733,11 @@
         <button class:active={locale === "en"} onclick={() => changeLocale("en")}>EN</button>
         <button class:active={locale === "es"} onclick={() => changeLocale("es")}>ES</button>
       </div>
+      {#if !showWelcome}
+        <button class="ghost-btn" onclick={() => (showOptions = true)} disabled={chromeDisabled}>
+          {t(locale, "shortcuts.options")}
+        </button>
+      {/if}
       <button class="primary-btn" onclick={openFolderDialog}>{t(locale, "openFolder")}</button>
     </div>
   </header>
@@ -785,13 +799,16 @@
         <h2>{t(locale, "noFolder")}</h2>
         <div class="modal-actions">
           <button class="primary-btn" onclick={openFolderDialog}>{t(locale, "openFolder")}</button>
+          <button class="ghost-btn" onclick={() => (showOptions = true)} disabled={chromeDisabled}>
+            {t(locale, "shortcuts.options")}
+          </button>
         </div>
       </div>
     </div>
   {:else}
     <section class="workspace">
       <div class="preview-column">
-        <PhotoViewer {locale} item={appState.item} bind:videoRef demoMode={!!screenshotMode} />
+        <PhotoViewer {locale} item={appState.item} bind:videoRef demoMode={!!screenshotMode} {videoWithSound} />
       </div>
       <aside class="side-panel">
         <div class="control-panel">
@@ -841,7 +858,8 @@
     {activeKey}
     {vertical}
     pendingTrim={pendingVideoTrim}
-    disabled={showWelcome || !appState.folder_path || !hasWorkspace || actionInFlight}
+    disabled={workspaceDisabled}
+    chromeDisabled={chromeDisabled}
     onSave={() => {
       flashKey("Enter");
       void saveCurrent();
@@ -895,6 +913,7 @@
   bind:scanRecursive={appState.scan_recursive}
   bind:renameMode={appState.rename_mode}
   bind:layoutMode
+  bind:videoWithSound
   errorLogCount={errorLogCount}
   errorLogPath={errorLogPath}
   onClose={closeOptions}
@@ -902,4 +921,5 @@
 />
 
 <HelpOverlay {locale} open={showHelp} onClose={closeHelp} />
+
 <Toast message={toastMessage} error={toastError} onDismiss={dismissToast} />

@@ -9,6 +9,7 @@
     progressTotal,
     activeKey = "",
     disabled = false,
+    chromeDisabled = false,
     vertical = false,
     onSave,
     onFolder,
@@ -27,6 +28,7 @@
     progressTotal: number;
     activeKey?: string;
     disabled?: boolean;
+    chromeDisabled?: boolean;
     vertical?: boolean;
     onSave: () => void;
     onFolder: () => void;
@@ -62,7 +64,7 @@
       label={folderKey}
       text={t(locale, "shortcuts.folder")}
       active={activeKey === folderKey}
-      {disabled}
+      disabled={chromeDisabled}
       onclick={onFolder}
     />
     <Kbd
@@ -112,14 +114,14 @@
       label={optionsKey}
       text={t(locale, "shortcuts.options")}
       active={activeKey === optionsKey}
-      {disabled}
+      disabled={chromeDisabled}
       onclick={onOptions}
     />
     <Kbd
       label="?"
       text={t(locale, "shortcuts.help")}
       active={activeKey === "?"}
-      {disabled}
+      disabled={chromeDisabled}
       onclick={onHelp}
     />
     <span class="shortcut-progress">

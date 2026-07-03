@@ -98,6 +98,8 @@ const messages = {
       sortModified: "Modified date",
       recursive: "Include subfolders",
       recursiveHint: "Re-scans all subfolders and may change queue order.",
+      videoSound: "Play videos with sound",
+      videoSoundHint: "Autoplay with audio when reviewing clips.",
       renameMode: "Rename mode",
       renameFree: "Free names with auto counter",
       renamePrefix: "Prefix + counter",
@@ -111,6 +113,20 @@ const messages = {
       faqDeleted: "Ctrl+D moves files to _deleted/ inside the album (not the system Trash). Use Ctrl+Z to undo.",
       faqDates: "Original EXIF dates and file timestamps are preserved.",
       modifierHint: "On Mac use ⌘ instead of Ctrl. Modifier shortcuts work while typing a name.",
+    },
+    preview: {
+      preparing: "Preparing preview…",
+      unsupportedFormat:
+        "This format cannot play in the built-in preview (common with MKV and some AVI files).",
+      proxyHint: "Compatible preview copy. The original file is unchanged.",
+      openExternal: "Open in default app",
+      imageFailed: "This file could not be previewed.",
+      imageEmpty: "The file is empty (0 bytes). It may be a failed download.",
+      imageTooSmall: "The file is too small to be a valid image.",
+      imageContentMismatch:
+        "The .jpg extension does not match the file contents. It may be a broken download or cache placeholder.",
+      imageUnknown:
+        "The built-in preview could not decode this image. Try opening it in Preview or Photos.",
     },
     trim: {
       title: "Trim video",
@@ -231,6 +247,8 @@ const messages = {
       sortModified: "Fecha de modificación",
       recursive: "Incluir subcarpetas",
       recursiveHint: "Vuelve a escanear subcarpetas y puede cambiar el orden de la cola.",
+      videoSound: "Reproducir vídeos con sonido",
+      videoSoundHint: "Autoplay con audio al revisar clips.",
       renameMode: "Modo de renombrado",
       renameFree: "Nombres libres con contador",
       renamePrefix: "Prefijo + contador",
@@ -244,6 +262,20 @@ const messages = {
       faqDeleted: "Ctrl+D mueve archivos a _deleted/ dentro del álbum (no a la Papelera del sistema). Usa Ctrl+Z para deshacer.",
       faqDates: "Se conservan las fechas EXIF y las fechas originales del archivo.",
       modifierHint: "En Mac usa ⌘ en lugar de Ctrl. Los atajos con modificador funcionan mientras escribes.",
+    },
+    preview: {
+      preparing: "Preparando vista previa…",
+      unsupportedFormat:
+        "Este formato no se reproduce en la vista previa integrada (habitual con MKV y algunos AVI).",
+      proxyHint: "Copia compatible para la vista previa. El archivo original no cambia.",
+      openExternal: "Abrir en app predeterminada",
+      imageFailed: "No se pudo previsualizar este archivo.",
+      imageEmpty: "El archivo está vacío (0 bytes). Puede ser una descarga fallida.",
+      imageTooSmall: "El archivo es demasiado pequeño para ser una imagen válida.",
+      imageContentMismatch:
+        "La extensión .jpg no coincide con el contenido. Puede ser una descarga rota o un caché incompleto.",
+      imageUnknown:
+        "La vista previa integrada no pudo decodificar esta imagen. Prueba a abrirla en Vista Previa o Fotos.",
     },
     trim: {
       title: "Recortar vídeo",

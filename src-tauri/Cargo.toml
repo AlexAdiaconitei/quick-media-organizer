@@ -1,6 +1,6 @@
 [package]
 name = "quick-media-organizer"
-version = "0.1.4"
+version = "0.1.5"
 description = "Organize photo and video folders quickly with keyboard shortcuts"
 authors = ["Ferran Vidal Bellés"]
 edition = "2021"
@@ -12,6 +12,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
@@ -21,4 +24,5 @@ serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 filetime = "0.2"
 kamadak-exif = "0.6"
+rayon = "1"
 walkdir = "2"

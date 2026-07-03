@@ -4,7 +4,7 @@ use crate::models::{
 };
 use crate::state::SharedState;
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 
 fn log_rust_error(log: &SharedErrorLog, command: &str, error: &str) {
@@ -87,11 +87,12 @@ pub fn set_ui_preferences(
     state: State<'_, SharedState>,
     layout_mode: LayoutMode,
     show_metadata: bool,
+    video_with_sound: bool,
 ) -> Result<AppSettings, String> {
     state
         .lock()
         .map_err(|e| e.to_string())?
-        .set_ui_preferences(layout_mode, show_metadata)
+        .set_ui_preferences(layout_mode, show_metadata, video_with_sound)
 }
 
 #[tauri::command]
@@ -126,7 +127,10 @@ pub fn open_folder(
 
 #[tauri::command]
 pub fn get_state(state: State<'_, SharedState>) -> Result<FrontendState, String> {
-    Ok(state.lock().map_err(|e| e.to_string())?.to_frontend_state())
+    Ok(state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .to_frontend_state())
 }
 
 #[tauri::command]
@@ -237,6 +241,24 @@ pub fn set_options(
     let mut guard = state.lock().map_err(|e| e.to_string())?;
     guard.set_options(sort_mode, scan_recursive, rename_mode)?;
     Ok(guard.to_frontend_state())
+}
+
+#[tauri::command]
+pub fn resolve_video_preview(
+    state: State<'_, SharedState>,
+    path: String,
+) -> Result<crate::models::VideoPreviewInfo, String> {
+    let guard = state.lock().map_err(|e| e.to_string())?;
+    let cache_dir = guard.app_data_dir.join("video-previews");
+    Ok(crate::video::resolve_video_preview(
+        Path::new(&path),
+        &cache_dir,
+    ))
+}
+
+#[tauri::command]
+pub fn diagnose_media_file(path: String) -> Result<crate::models::MediaFileDiagnosis, String> {
+    Ok(crate::media::diagnose_media_file(Path::new(&path)))
 }
 
 #[tauri::command]

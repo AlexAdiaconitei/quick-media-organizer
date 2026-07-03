@@ -47,6 +47,8 @@ pub fn run() {
             commands::toggle_favorite_folder,
             commands::set_options,
             commands::check_ffmpeg,
+            commands::resolve_video_preview,
+            commands::diagnose_media_file,
             commands::trim_current_video,
             commands::report_error,
             commands::get_error_log,

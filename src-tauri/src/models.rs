@@ -75,6 +75,30 @@ pub struct MediaMetadata {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoPreviewInfo {
+    pub playback_path: String,
+    pub poster_path: Option<String>,
+    #[serde(rename = "mode")]
+    pub preview_mode: VideoPreviewMode,
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoPreviewMode {
+    Native,
+    Proxy,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaFileDiagnosis {
+    pub issue: String,
+    pub size_bytes: u64,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrontendState {
     pub folder_path: Option<String>,
     pub current_index: usize,
@@ -126,6 +150,8 @@ pub struct AppSettings {
     #[serde(default = "default_show_metadata")]
     pub show_metadata: bool,
     #[serde(default)]
+    pub video_with_sound: bool,
+    #[serde(default)]
     pub last_folder_path: Option<String>,
 }
 
@@ -141,6 +167,7 @@ impl Default for AppSettings {
             favorite_folders: Vec::new(),
             layout_mode: LayoutMode::default(),
             show_metadata: true,
+            video_with_sound: false,
             last_folder_path: None,
         }
     }
@@ -164,6 +191,13 @@ pub enum UndoAction {
         stat_kind: UndoStatKind,
     },
     MoveToFolder {
+        moves: Vec<PathPair>,
+        #[serde(default)]
+        focus_paths: Vec<String>,
+        #[serde(default)]
+        stat_kind: UndoStatKind,
+    },
+    FlattenToRoot {
         moves: Vec<PathPair>,
         #[serde(default)]
         focus_paths: Vec<String>,

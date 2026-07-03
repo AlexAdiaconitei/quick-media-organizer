@@ -94,3 +94,18 @@ pub fn rel_path_from_root(root: &Path, path: &Path) -> Option<String> {
 pub fn has_parent_traversal(path: &Path) -> bool {
     path.components().any(|c| matches!(c, Component::ParentDir))
 }
+
+pub fn is_path_in_ignored_dir(root: &Path, path: &Path) -> bool {
+    if let Ok(relative) = path.strip_prefix(root) {
+        for component in relative.components() {
+            if let Component::Normal(name) = component {
+                if let Some(name) = name.to_str() {
+                    if IGNORED_FOLDER_NAMES.contains(&name) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}

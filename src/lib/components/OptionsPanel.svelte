@@ -10,6 +10,7 @@
     scanRecursive = $bindable(false),
     renameMode = $bindable<RenameMode>("free"),
     layoutMode = $bindable<LayoutMode>("sidebar"),
+    videoWithSound = $bindable(false),
     errorLogCount = 0,
     errorLogPath = "",
     onClose,
@@ -21,6 +22,7 @@
     scanRecursive?: boolean;
     renameMode?: RenameMode;
     layoutMode?: LayoutMode;
+    videoWithSound?: boolean;
     errorLogCount?: number;
     errorLogPath?: string;
     onClose: () => void;
@@ -53,6 +55,14 @@
           <span>
             {t(locale, "options.recursive")}
             <small class="option-hint">{t(locale, "options.recursiveHint")}</small>
+          </span>
+        </label>
+
+        <label class="checkbox-row">
+          <input type="checkbox" bind:checked={videoWithSound} />
+          <span>
+            {t(locale, "options.videoSound")}
+            <small class="option-hint">{t(locale, "options.videoSoundHint")}</small>
           </span>
         </label>
 

@@ -55,7 +55,22 @@ export interface AppSettings {
   favorite_folders: string[];
   layout_mode?: LayoutMode;
   show_metadata?: boolean;
+  video_with_sound?: boolean;
   last_folder_path?: string | null;
 }
 
 export type Locale = "en" | "es";
+
+export type VideoPreviewMode = "native" | "proxy" | "unavailable";
+
+export interface VideoPreviewInfo {
+  playback_path: string;
+  poster_path?: string | null;
+  mode: VideoPreviewMode;
+  hint?: string | null;
+}
+
+export interface MediaFileDiagnosis {
+  issue: "empty" | "too_small" | "content_mismatch" | "unknown";
+  size_bytes: number;
+}

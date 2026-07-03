@@ -1,8 +1,11 @@
 use crate::fs_util::{apply_timestamps, execute_moves, move_file_preserve, read_timestamps};
-use crate::media::{count_root_subfolder_media, list_subfolders, scan_folder, sort_items};
+use crate::media::{
+    build_media_item_from_paths, count_root_subfolder_media, enrich_item_metadata,
+    list_subfolders, prepare_sorted_items, refresh_item_size, scan_folder, sort_items,
+};
 use crate::models::{
-    ActionResult, AppSettings, FrontendState, LayoutMode, MediaItem, PathPair, RenameMode,
-    SessionData, SessionStats, SortMode, UndoAction, UndoStatKind,
+    ActionResult, AppSettings, FrontendState, LayoutMode, MediaItem, PathPair,
+    RenameMode, SessionData, SessionStats, SortMode, UndoAction, UndoStatKind,
 };
 use crate::path_util::{resolve_dest_dir, validate_rel_folder};
 use crate::rename::{
@@ -37,6 +40,8 @@ pub struct AppState {
     transient_session_reset: bool,
     transient_resume_from: Option<usize>,
     transient_subfolder_media: Option<usize>,
+    cached_subfolders: Vec<String>,
+    subfolders_dirty: bool,
 }
 
 impl AppState {
@@ -62,31 +67,49 @@ impl AppState {
             transient_session_reset: false,
             transient_resume_from: None,
             transient_subfolder_media: None,
+            cached_subfolders: Vec::new(),
+            subfolders_dirty: true,
         }
     }
 
     pub fn open_folder(&mut self, folder: PathBuf) -> Result<(), String> {
-        let mut items = scan_folder(&folder, self.scan_recursive)?;
-        if items.is_empty() {
-            let subfolder_count = count_root_subfolder_media(&folder);
-            if subfolder_count > 0 {
-                return Err(format!(
-                    "No media in the root folder, but found {subfolder_count} in subfolders. Enable 'Include subfolders' in Options."
-                ));
-            }
-            return Err("No photos or videos found in this folder.".into());
-        }
-
         self.transient_session_reset = false;
         self.transient_resume_from = None;
         self.transient_subfolder_media = None;
 
-        let subfolder_media = count_root_subfolder_media(&folder);
+        let session = load_session(&folder);
         let mut saved_paths: Vec<String> = Vec::new();
-        if let Some(session) = load_session(&folder) {
+
+        if let Some(session) = &session {
             self.sort_mode = session.sort_mode;
             self.scan_recursive = session.scan_recursive;
             self.rename_mode = session.rename_mode;
+            saved_paths = session.current_item_paths.clone();
+        } else {
+            self.counter_map.clear();
+            self.undo_stack.clear();
+            self.stats = SessionStats::default();
+            self.current_index = 0;
+            self.armed_folder = None;
+            self.recent_folders.clear();
+            self.processed_paths.clear();
+        }
+
+        let mut items = scan_folder(&folder, self.scan_recursive)?;
+        if items.is_empty() && !self.scan_recursive {
+            let recursive_items = scan_folder(&folder, true)?;
+            if !recursive_items.is_empty() {
+                self.scan_recursive = true;
+                items = recursive_items;
+            }
+        }
+        if items.is_empty() {
+            return Err("No photos or videos found in this folder.".into());
+        }
+
+        let subfolder_media = count_root_subfolder_media(&folder);
+
+        if let Some(session) = session {
             self.counter_map = session.counter_map;
             if session.stats.moved == 0 && !session.recent_folders.is_empty() {
                 // Sessions saved before recents were scoped per album could inherit
@@ -99,23 +122,14 @@ impl AppState {
             self.undo_stack = session.undo_stack;
             self.stats = session.stats;
             self.processed_paths = session.processed_paths.into_iter().collect();
-            saved_paths = session.current_item_paths;
             if saved_paths.is_empty() {
                 self.current_index = session
                     .current_index
                     .min(items.len().saturating_sub(1));
             }
-        } else {
-            self.counter_map.clear();
-            self.undo_stack.clear();
-            self.stats = SessionStats::default();
-            self.current_index = 0;
-            self.armed_folder = None;
-            self.recent_folders.clear();
-            self.processed_paths.clear();
         }
 
-        sort_items(&mut items, self.sort_mode);
+        prepare_sorted_items(&mut items, self.sort_mode);
         if !saved_paths.is_empty() {
             if let Some(idx) = self.find_item_index_by_paths(&saved_paths, &items) {
                 self.current_index = idx;
@@ -130,9 +144,13 @@ impl AppState {
 
         self.folder_path = Some(folder.clone());
         self.items = items;
+        self.sanitize_inflated_session_stats();
         if let Some(item) = self.current_item() {
             if self.is_item_processed(item) {
-                if let Some(next) = self.find_next_unprocessed_from(0) {
+                let start = (self.current_index + 1).min(self.items.len().saturating_sub(1));
+                if let Some(next) = self.find_next_unprocessed_from(start) {
+                    self.current_index = next;
+                } else if let Some(next) = self.find_next_unprocessed_from(0) {
                     self.current_index = next;
                 }
             }
@@ -149,17 +167,21 @@ impl AppState {
         self.session_complete = false;
         self.app_settings.last_folder_path = Some(folder.to_string_lossy().to_string());
         save_app_settings(&self.app_data_dir, &self.app_settings)?;
+        self.subfolders_dirty = true;
+        self.refresh_subfolders_cache();
         self.persist_session_best_effort();
         Ok(())
     }
 
-    pub fn to_frontend_state(&self) -> FrontendState {
+    pub fn to_frontend_state(&mut self) -> FrontendState {
+        if let Some(item) = self.items.get_mut(self.current_index) {
+            enrich_item_metadata(item);
+        }
+
         let folder_path = self.folder_path.as_ref().map(|p| p.to_string_lossy().to_string());
-        let existing_subfolders = self
-            .folder_path
-            .as_ref()
-            .map(|p| list_subfolders(p))
-            .unwrap_or_default();
+        if self.subfolders_dirty {
+            self.refresh_subfolders_cache();
+        }
 
         FrontendState {
             folder_path,
@@ -172,7 +194,7 @@ impl AppState {
             armed_folder: self.armed_folder.clone(),
             recent_folders: self.recent_folders.clone(),
             favorite_folders: self.app_settings.favorite_folders.clone(),
-            existing_subfolders,
+            existing_subfolders: self.cached_subfolders.clone(),
             stats: self.stats.clone(),
             session_complete: self.session_complete,
             session_reset: false,
@@ -234,13 +256,14 @@ impl AppState {
     pub fn restart_queue(&mut self) -> Result<(), String> {
         let folder = self.folder_path.clone().ok_or("No folder open")?;
         self.items = scan_folder(&folder, self.scan_recursive)?;
-        sort_items(&mut self.items, self.sort_mode);
+        prepare_sorted_items(&mut self.items, self.sort_mode);
         self.current_index = 0;
         self.session_complete = false;
         self.armed_folder = None;
         self.stats = SessionStats::default();
         self.counter_map.clear();
         self.processed_paths.clear();
+        self.subfolders_dirty = true;
         self.persist_session_best_effort();
         Ok(())
     }
@@ -333,7 +356,7 @@ impl AppState {
             stat_kind: UndoStatKind::Trashed,
         });
         self.stats.trashed += 1;
-        self.refresh_after_action()?;
+        self.remove_current_from_queue()?;
         Ok(self.ok("Moved to _deleted (not system Trash). Press Undo to restore."))
     }
 
@@ -388,6 +411,7 @@ impl AppState {
             .collect();
 
         self.remember_folder(&rel);
+        self.mark_subfolders_dirty();
         self.push_undo(UndoAction::MoveToFolder {
             moves: undo_moves,
             focus_paths: item.paths.clone(),
@@ -395,7 +419,7 @@ impl AppState {
         });
         self.stats.moved += 1;
         self.armed_folder = None;
-        self.refresh_after_action()?;
+        self.remove_current_from_queue()?;
         Ok(self.ok("Saved to folder"))
     }
 
@@ -476,7 +500,10 @@ impl AppState {
             stat_kind: UndoStatKind::None,
         });
 
-        self.refresh_after_action()?;
+        if let Some(item) = self.items.get_mut(self.current_index) {
+            refresh_item_size(item);
+        }
+        self.persist_session_best_effort();
         Ok(self.ok("Video trimmed losslessly (no re-encoding)"))
     }
 
@@ -503,6 +530,11 @@ impl AppState {
                 focus_paths,
                 stat_kind,
             }
+            | UndoAction::FlattenToRoot {
+                moves,
+                focus_paths,
+                stat_kind,
+            }
             | UndoAction::TrimVideo {
                 moves,
                 focus_paths,
@@ -524,29 +556,20 @@ impl AppState {
         }
 
         self.undo_stack.pop();
-        self.revert_stat(stat_kind);
+        if !matches!(action, UndoAction::FlattenToRoot { .. }) {
+            self.revert_stat(stat_kind);
+        }
         self.unmark_paths(&focus_paths);
         for pair in &moves {
             self.unmark_path(&pair.from);
             self.unmark_path(&pair.to);
         }
         self.session_complete = false;
-
-        if let Some(folder) = self.folder_path.clone() {
-            self.items = scan_folder(&folder, self.scan_recursive)?;
-            sort_items(&mut self.items, self.sort_mode);
-
-            if let Some(idx) = self.find_item_index_by_paths(&focus_paths, &self.items) {
-                self.current_index = idx;
-            } else if self.items.is_empty() {
-                self.current_index = 0;
-            } else {
-                self.current_index = self
-                    .current_index
-                    .min(self.items.len().saturating_sub(1));
-            }
+        if matches!(action, UndoAction::FlattenToRoot { .. }) {
+            self.stats = SessionStats::default();
+            self.processed_paths.clear();
         }
-
+        self.apply_undo_to_queue(&action, &focus_paths, &moves);
         self.persist_session_best_effort();
         Ok(self.ok("Undone"))
     }
@@ -676,13 +699,25 @@ impl AppState {
             .current_item()
             .map(|item| item.paths.clone())
             .unwrap_or_default();
+        let recursive_changed = self.scan_recursive != scan_recursive;
+        let sort_changed = self.sort_mode != sort_mode;
 
         self.sort_mode = sort_mode;
         self.scan_recursive = scan_recursive;
         self.rename_mode = rename_mode;
+
         if let Some(folder) = self.folder_path.clone() {
-            self.items = scan_folder(&folder, self.scan_recursive)?;
-            sort_items(&mut self.items, self.sort_mode);
+            if recursive_changed {
+                self.items = scan_folder(&folder, self.scan_recursive)?;
+                prepare_sorted_items(&mut self.items, self.sort_mode);
+                self.subfolders_dirty = true;
+            } else if sort_changed {
+                if self.sort_mode == SortMode::ExifDate {
+                    crate::media::enrich_exif_dates_for_sort(&mut self.items);
+                }
+                sort_items(&mut self.items, self.sort_mode);
+            }
+
             if !current_paths.is_empty() {
                 self.current_index = self
                     .find_item_index_by_paths(&current_paths, &self.items)
@@ -710,9 +745,11 @@ impl AppState {
         &mut self,
         layout_mode: LayoutMode,
         show_metadata: bool,
+        video_with_sound: bool,
     ) -> Result<AppSettings, String> {
         self.app_settings.layout_mode = layout_mode;
         self.app_settings.show_metadata = show_metadata;
+        self.app_settings.video_with_sound = video_with_sound;
         save_app_settings(&self.app_data_dir, &self.app_settings)?;
         Ok(self.app_settings.clone())
     }
@@ -728,18 +765,19 @@ impl AppState {
         self.recent_folders.truncate(12);
     }
 
-    fn refresh_after_action(&mut self) -> Result<(), String> {
-        if let Some(folder) = self.folder_path.clone() {
-            let index = self.current_index;
-            self.items = scan_folder(&folder, self.scan_recursive)?;
-            sort_items(&mut self.items, self.sort_mode);
-            if self.items.is_empty() {
-                self.current_index = 0;
-                self.session_complete = true;
-            } else {
-                self.advance_after_processing(index, false);
-            }
+    fn remove_current_from_queue(&mut self) -> Result<(), String> {
+        let index = self.current_index;
+        if index < self.items.len() {
+            self.items.remove(index);
         }
+
+        if self.items.is_empty() {
+            self.current_index = 0;
+            self.session_complete = true;
+        } else {
+            self.advance_after_processing(index, false);
+        }
+
         self.persist_session_best_effort();
         Ok(())
     }
@@ -747,21 +785,144 @@ impl AppState {
     fn refresh_after_rename(
         &mut self,
         old_index: usize,
-        _new_paths: &[String],
+        new_paths: &[String],
     ) -> Result<(), String> {
-        if let Some(folder) = self.folder_path.clone() {
-            self.items = scan_folder(&folder, self.scan_recursive)?;
-            sort_items(&mut self.items, self.sort_mode);
-
-            if self.items.is_empty() {
-                self.current_index = 0;
-                self.session_complete = true;
-            } else {
-                self.advance_after_processing(old_index, true);
-            }
+        if self.items.is_empty() {
+            self.current_index = 0;
+            self.session_complete = true;
+            self.persist_session_best_effort();
+            return Ok(());
         }
+
+        let updated_id = self.update_item_after_rename(old_index, new_paths)?;
+        let advance_from = if self.sort_mode == SortMode::FileName {
+            sort_items(&mut self.items, self.sort_mode);
+            self.items
+                .iter()
+                .position(|item| item.id == updated_id)
+                .unwrap_or(old_index)
+        } else {
+            old_index
+        };
+
+        self.advance_after_processing(advance_from, true);
         self.persist_session_best_effort();
         Ok(())
+    }
+
+    fn update_item_after_rename(
+        &mut self,
+        index: usize,
+        new_paths: &[String],
+    ) -> Result<String, String> {
+        let item = self
+            .items
+            .get_mut(index)
+            .ok_or("Renamed item missing from queue")?;
+        let primary = PathBuf::from(&new_paths[0]);
+
+        item.paths = new_paths.to_vec();
+        item.id = new_paths[0].clone();
+        item.file_name = primary
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string();
+        item.extension = primary
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        item.is_video = crate::media::is_video_extension(&item.extension);
+        refresh_item_size(item);
+
+        Ok(item.id.clone())
+    }
+
+    fn insert_item_sorted(&mut self, item: MediaItem) {
+        self.items.push(item);
+        sort_items(&mut self.items, self.sort_mode);
+    }
+
+    fn apply_undo_to_queue(
+        &mut self,
+        action: &UndoAction,
+        focus_paths: &[String],
+        moves: &[PathPair],
+    ) {
+        match action {
+            UndoAction::Rename { .. } => {
+                let post_rename_paths: Vec<String> = moves.iter().map(|pair| pair.from.clone()).collect();
+                if let Some(idx) = self.find_item_index_by_paths(&post_rename_paths, &self.items) {
+                    let _ = self.update_item_after_rename(idx, focus_paths);
+                    self.current_index = if self.sort_mode == SortMode::FileName {
+                        sort_items(&mut self.items, self.sort_mode);
+                        self.find_item_index_by_paths(focus_paths, &self.items)
+                            .unwrap_or(idx)
+                    } else {
+                        idx
+                    };
+                } else if let Some(idx) = self.find_item_index_by_paths(focus_paths, &self.items) {
+                    self.current_index = idx;
+                }
+            }
+            UndoAction::Trash { .. } | UndoAction::MoveToFolder { .. } => {
+                let item = build_media_item_from_paths(focus_paths);
+                self.insert_item_sorted(item);
+                if let Some(idx) = self.find_item_index_by_paths(focus_paths, &self.items) {
+                    self.current_index = idx;
+                }
+                if matches!(action, UndoAction::MoveToFolder { .. }) {
+                    self.mark_subfolders_dirty();
+                }
+            }
+            UndoAction::FlattenToRoot { .. } => {
+                if let Some(folder) = self.folder_path.clone() {
+                    self.scan_recursive = true;
+                    self.items = scan_folder(&folder, true).unwrap_or_default();
+                    prepare_sorted_items(&mut self.items, self.sort_mode);
+                    if let Some(idx) = self.find_item_index_by_paths(focus_paths, &self.items) {
+                        self.current_index = idx;
+                    } else if self.items.is_empty() {
+                        self.current_index = 0;
+                    } else {
+                        self.current_index = self
+                            .current_index
+                            .min(self.items.len().saturating_sub(1));
+                    }
+                    self.mark_subfolders_dirty();
+                }
+            }
+            UndoAction::TrimVideo { .. } => {
+                if let Some(idx) = self.find_item_index_by_paths(focus_paths, &self.items) {
+                    self.current_index = idx;
+                    if let Some(item) = self.items.get_mut(idx) {
+                        refresh_item_size(item);
+                    }
+                }
+            }
+        }
+
+        if self.items.is_empty() {
+            self.current_index = 0;
+        } else {
+            self.current_index = self
+                .current_index
+                .min(self.items.len().saturating_sub(1));
+        }
+    }
+
+    fn refresh_subfolders_cache(&mut self) {
+        self.cached_subfolders = self
+            .folder_path
+            .as_ref()
+            .map(|path| list_subfolders(path))
+            .unwrap_or_default();
+        self.subfolders_dirty = false;
+    }
+
+    fn mark_subfolders_dirty(&mut self) {
+        self.subfolders_dirty = true;
     }
 
     fn push_undo(&mut self, action: UndoAction) {
@@ -771,6 +932,52 @@ impl AppState {
             self.undo_stack.drain(0..overflow);
             self.undo_overflow_notified = true;
         }
+    }
+
+    fn sanitize_inflated_session_stats(&mut self) {
+        let flatten_moves: u32 = self
+            .undo_stack
+            .iter()
+            .filter_map(|action| {
+                if let UndoAction::FlattenToRoot { moves, .. } = action {
+                    Some(moves.len() as u32)
+                } else {
+                    None
+                }
+            })
+            .sum();
+
+        if flatten_moves > 0 && self.stats.moved >= flatten_moves {
+            self.stats.moved = self.stats.moved.saturating_sub(flatten_moves);
+        }
+
+        let queue_len = self.items.len();
+        let removed = self.stats.moved as usize + self.stats.trashed as usize;
+        if queue_len == 0 || removed == 0 {
+            return;
+        }
+
+        let apparent_total = queue_len + removed;
+        if apparent_total <= queue_len + queue_len / 20 || self.stats.moved as usize <= queue_len / 2 {
+            return;
+        }
+
+        let Some(folder) = self.folder_path.clone() else {
+            return;
+        };
+        let Ok(recursive_items) = scan_folder(&folder, true) else {
+            return;
+        };
+        let album_size = recursive_items.len();
+        if album_size == 0 || apparent_total <= album_size + album_size / 50 {
+            return;
+        }
+
+        let inflation = apparent_total.saturating_sub(album_size);
+        self.stats.moved = self
+            .stats
+            .moved
+            .saturating_sub(inflation.min(self.stats.moved as usize) as u32);
     }
 
     fn revert_stat(&mut self, kind: UndoStatKind) {
@@ -833,7 +1040,7 @@ impl AppState {
         }
     }
 
-    fn fail(&self, message: &str) -> ActionResult {
+    fn fail(&mut self, message: &str) -> ActionResult {
         ActionResult {
             success: false,
             message: message.to_string(),

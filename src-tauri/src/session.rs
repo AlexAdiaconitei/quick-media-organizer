@@ -26,7 +26,7 @@ pub fn load_session(folder: &Path) -> Option<SessionData> {
 pub fn save_session(folder: &Path, session: &SessionData) -> Result<(), String> {
     let dir = session_dir_for(folder);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let content = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
+    let content = serde_json::to_string(session).map_err(|e| e.to_string())?;
     fs::write(dir.join(SESSION_FILE), content).map_err(|e| e.to_string())
 }
 
