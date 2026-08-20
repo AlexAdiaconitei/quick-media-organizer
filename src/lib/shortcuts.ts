@@ -29,3 +29,13 @@ export function isSkipShortcut(event: KeyboardEvent): boolean {
     ? event.metaKey && event.shiftKey && !event.ctrlKey
     : event.ctrlKey && !event.metaKey && !event.shiftKey;
 }
+
+/// Platform-appropriate install command, so Windows users are not told to use
+/// Homebrew.
+export function ffmpegInstallCommand(): string {
+  if (isMacPlatform()) return "brew install ffmpeg";
+  if (typeof navigator !== "undefined" && /Win/i.test(navigator.platform)) {
+    return "winget install Gyan.FFmpeg";
+  }
+  return "sudo apt install ffmpeg";
+}

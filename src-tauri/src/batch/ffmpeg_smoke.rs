@@ -15,7 +15,7 @@ use super::{
     BatchItemState, BatchItemStatus, BatchJobStatus, BatchProgressSummary, BatchSettings,
     ImageFormat, OutputMode, VideoCodec,
 };
-use crate::video::no_window_command;
+use crate::video::{find_binary, no_window_command};
 
 struct SilentEvents;
 
@@ -29,9 +29,19 @@ fn ffmpeg_available() -> bool {
     FfmpegEncoder::locate().is_ok()
 }
 
+/// Resolved the same way the app does, so the fixtures work even when ffmpeg
+/// is only reachable through an install folder and not through PATH.
+fn ffmpeg_bin() -> PathBuf {
+    find_binary("ffmpeg").expect("ffmpeg should be resolvable")
+}
+
+fn ffprobe_bin() -> PathBuf {
+    find_binary("ffprobe").expect("ffprobe should be resolvable")
+}
+
 /// Renders a short synthetic clip with audio.
 fn make_video(path: &Path) {
-    let status = no_window_command(Path::new("ffmpeg"))
+    let status = no_window_command(&ffmpeg_bin())
         .args([
             "-hide_banner",
             "-y",
@@ -60,7 +70,7 @@ fn make_video(path: &Path) {
 }
 
 fn make_image(path: &Path) {
-    let status = no_window_command(Path::new("ffmpeg"))
+    let status = no_window_command(&ffmpeg_bin())
         .args([
             "-hide_banner",
             "-y",
@@ -78,7 +88,7 @@ fn make_image(path: &Path) {
 }
 
 fn dimensions(path: &Path) -> (u32, u32) {
-    let output = no_window_command(Path::new("ffprobe"))
+    let output = no_window_command(&ffprobe_bin())
         .args([
             "-v",
             "error",

@@ -155,7 +155,7 @@ const messages = {
       next: "Next",
       close: "Close",
       ffmpegMissing:
-        "FFmpeg is required for batch conversion. Install it (e.g. brew install ffmpeg) and reopen this panel.",
+        "FFmpeg is required for batch conversion. Install it with {command}, then reopen the app.",
       heicWarning:
         "This FFmpeg build cannot read HEIC/HEIF. Those files will fail — install a full FFmpeg build to convert them.",
       alreadyRunning: "A batch job is already running.",
@@ -406,7 +406,7 @@ const messages = {
     trim: {
       title: "Recortar vídeo",
       lossless: "Sin pérdida",
-      ffmpegMissing: "Instala FFmpeg para recortar (brew install ffmpeg). No se pierde calidad — se copian los streams, sin re-codificar.",
+      ffmpegMissing: "Instala FFmpeg para recortar ({command}). No se pierde calidad — se copian los streams, sin re-codificar.",
       start: "Inicio",
       end: "Final",
       kept: "Se conserva {duration}",
@@ -430,7 +430,7 @@ const messages = {
       next: "Siguiente",
       close: "Cerrar",
       ffmpegMissing:
-        "FFmpeg es necesario para convertir en lote. Instálalo (por ejemplo brew install ffmpeg) y vuelve a abrir este panel.",
+        "FFmpeg es necesario para convertir en lote. Instálalo con {command} y vuelve a abrir la app.",
       heicWarning:
         "Esta versión de FFmpeg no puede leer HEIC/HEIF. Esos archivos fallarán — instala una versión completa de FFmpeg para convertirlos.",
       alreadyRunning: "Ya hay un lote en marcha.",

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { format, t, type Locale } from "../i18n";
+  import { ffmpegInstallCommand } from "../shortcuts";
 
   let {
     locale,
@@ -169,7 +170,9 @@
   </div>
 
   {#if !ffmpegAvailable}
-    <p class="trim-warning">{t(locale, "trim.ffmpegMissing")}</p>
+    <p class="trim-warning">
+      {format(locale, "trim.ffmpegMissing", { command: ffmpegInstallCommand() })}
+    </p>
   {/if}
 
   <div class="trim-range" aria-label={t(locale, "trim.title")}>

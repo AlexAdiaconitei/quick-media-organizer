@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
 use crate::batch::FfmpegCapabilities;
@@ -296,37 +297,131 @@ pub fn no_window_command(program: &Path) -> Command {
     command
 }
 
-fn find_binary(name: &str) -> Result<PathBuf, String> {
-    let candidates = if cfg!(target_os = "macos") {
-        vec![
-            name.to_string(),
-            format!("/opt/homebrew/bin/{name}"),
-            format!("/usr/local/bin/{name}"),
-        ]
-    } else if cfg!(target_os = "windows") {
-        vec![
-            name.to_string(),
-            format!("{name}.exe"),
-            format!(r"C:\ffmpeg\bin\{name}.exe"),
-        ]
-    } else {
-        vec![name.to_string(), format!("/usr/bin/{name}")]
-    };
+/// Resolved binaries, so repeated lookups do not spawn a probe process each
+/// time. Only successes are cached: a user who installs ffmpeg while the app
+/// is open should be picked up on the next try.
+static RESOLVED: Mutex<Option<Vec<(String, PathBuf)>>> = Mutex::new(None);
 
-    for candidate in candidates {
-        if no_window_command(Path::new(&candidate))
+fn cached_binary(name: &str) -> Option<PathBuf> {
+    let guard = RESOLVED.lock().ok()?;
+    let entries = guard.as_ref()?;
+    entries
+        .iter()
+        .find(|(cached, _)| cached == name)
+        .map(|(_, path)| path.clone())
+}
+
+fn cache_binary(name: &str, path: &Path) {
+    if let Ok(mut guard) = RESOLVED.lock() {
+        let entries = guard.get_or_insert_with(Vec::new);
+        entries.retain(|(cached, _)| cached != name);
+        entries.push((name.to_string(), path.to_path_buf()));
+    }
+}
+
+pub(crate) fn find_binary(name: &str) -> Result<PathBuf, String> {
+    if let Some(path) = cached_binary(name) {
+        return Ok(path);
+    }
+
+    for candidate in binary_candidates(name) {
+        if no_window_command(&candidate)
             .arg("-version")
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
         {
-            return Ok(PathBuf::from(candidate));
+            cache_binary(name, &candidate);
+            return Ok(candidate);
         }
     }
 
-    Err(format!(
-        "FFmpeg not found ({name}). Install it to trim videos losslessly (e.g. brew install ffmpeg)."
-    ))
+    Err(missing_ffmpeg_message(name))
+}
+
+/// PATH first, then the usual install locations. Windows needs the extra work:
+/// installers add their folder to the *user* PATH in the registry, which
+/// running processes never pick up until they are restarted.
+fn binary_candidates(name: &str) -> Vec<PathBuf> {
+    let mut candidates = vec![PathBuf::from(name)];
+
+    if cfg!(target_os = "macos") {
+        candidates.push(PathBuf::from(format!("/opt/homebrew/bin/{name}")));
+        candidates.push(PathBuf::from(format!("/usr/local/bin/{name}")));
+    } else if cfg!(target_os = "windows") {
+        candidates.push(PathBuf::from(format!("{name}.exe")));
+
+        if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+            // winget shim folder.
+            candidates.push(
+                local
+                    .join("Microsoft")
+                    .join("WinGet")
+                    .join("Links")
+                    .join(format!("{name}.exe")),
+            );
+            // winget keeps the real binaries in a versioned folder, e.g.
+            // Packages/Gyan.FFmpeg_.../ffmpeg-9.0-full_build/bin/ffmpeg.exe
+            candidates.extend(winget_package_binaries(&local, name));
+        }
+
+        candidates.push(PathBuf::from(format!(r"C:\ffmpeg\bin\{name}.exe")));
+        candidates.push(PathBuf::from(format!(
+            r"C:\Program Files\ffmpeg\bin\{name}.exe"
+        )));
+
+        if let Some(program_data) = std::env::var_os("ProgramData").map(PathBuf::from) {
+            candidates.push(program_data.join("chocolatey").join("bin").join(format!("{name}.exe")));
+        }
+        if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+            candidates.push(home.join("scoop").join("shims").join(format!("{name}.exe")));
+        }
+    } else {
+        candidates.push(PathBuf::from(format!("/usr/bin/{name}")));
+        candidates.push(PathBuf::from(format!("/usr/local/bin/{name}")));
+        candidates.push(PathBuf::from(format!("/snap/bin/{name}")));
+    }
+
+    candidates
+}
+
+/// Every `…/WinGet/Packages/<pkg>/<build>/bin/<name>.exe` that exists.
+fn winget_package_binaries(local_app_data: &Path, name: &str) -> Vec<PathBuf> {
+    let packages = local_app_data
+        .join("Microsoft")
+        .join("WinGet")
+        .join("Packages");
+    let Ok(entries) = fs::read_dir(&packages) else {
+        return Vec::new();
+    };
+
+    let mut found = Vec::new();
+    for package in entries.filter_map(Result::ok) {
+        if !package.path().is_dir() {
+            continue;
+        }
+        let Ok(builds) = fs::read_dir(package.path()) else {
+            continue;
+        };
+        for build in builds.filter_map(Result::ok) {
+            let candidate = build.path().join("bin").join(format!("{name}.exe"));
+            if candidate.is_file() {
+                found.push(candidate);
+            }
+        }
+    }
+    found
+}
+
+fn missing_ffmpeg_message(name: &str) -> String {
+    let hint = if cfg!(target_os = "windows") {
+        "install it with `winget install Gyan.FFmpeg` and reopen the app"
+    } else if cfg!(target_os = "macos") {
+        "install it with `brew install ffmpeg`"
+    } else {
+        "install it with your package manager, e.g. `sudo apt install ffmpeg`"
+    };
+    format!("FFmpeg not found ({name}). To trim and convert videos, {hint}.")
 }
 
 pub fn trim_backup_path(folder: &Path, video_path: &Path) -> PathBuf {

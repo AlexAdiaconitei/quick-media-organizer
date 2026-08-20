@@ -23,6 +23,7 @@
   } from "../batch";
   import { invokeLogged } from "../errorReporter";
   import { format, t, type Locale } from "../i18n";
+  import { ffmpegInstallCommand } from "../shortcuts";
   import type {
     BatchItemStatus,
     BatchJobStatus,
@@ -284,7 +285,7 @@
       return;
     }
     if (!capabilities.available) {
-      onError(t(locale, "batch.ffmpegMissing"));
+      onError(format(locale, "batch.ffmpegMissing", { command: ffmpegInstallCommand() }));
       return;
     }
 
@@ -347,7 +348,9 @@
       </header>
 
       {#if !capabilities.available}
-        <p class="batch-warning">{t(locale, "batch.ffmpegMissing")}</p>
+        <p class="batch-warning">
+          {format(locale, "batch.ffmpegMissing", { command: ffmpegInstallCommand() })}
+        </p>
       {:else if hasHeic && !capabilities.heic_decode}
         <p class="batch-warning">{t(locale, "batch.heicWarning")}</p>
       {/if}
