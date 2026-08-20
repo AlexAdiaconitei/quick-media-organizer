@@ -33,6 +33,7 @@
         <Kbd label="← →" text={t(locale, "shortcuts.nav")} />
         <Kbd label={modLabel("Z")} text={t(locale, "shortcuts.undo")} />
         <Kbd label={modLabel("M")} text={t(locale, "shortcuts.info")} />
+        <Kbd label={modLabel("B")} text={t(locale, "batch.open")} />
         <Kbd label={modLabel("O")} text={t(locale, "shortcuts.options")} />
         <Kbd label="Esc" text={t(locale, "common.close")} />
       </div>

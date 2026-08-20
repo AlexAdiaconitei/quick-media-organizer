@@ -16,7 +16,7 @@ use super::ffmpeg_args::{
     video_flags,
 };
 use super::{
-    BatchItemState, BatchItemStatus, BatchJobStatus, BatchMediaType, BatchProgressSummary,
+    AudioMode, BatchItemState, BatchItemStatus, BatchJobStatus, BatchMediaType, BatchProgressSummary,
     BatchReplacement, BatchSettings, OutputMode,
 };
 use crate::fs_util::{apply_timestamps, read_timestamps};
@@ -153,6 +153,8 @@ pub struct EncodePlan {
     pub temp_output: PathBuf,
     pub final_output: PathBuf,
     pub flags: Vec<String>,
+    /// Retried once with these when the first attempt fails (audio copy).
+    pub fallback_flags: Option<Vec<String>>,
     pub media_type: BatchMediaType,
     pub replace_original: bool,
     pub backup: bool,
@@ -207,17 +209,17 @@ pub fn plan_items(paths: &[String], settings: &BatchSettings) -> Vec<PlannedItem
         }
 
         match build_plan(&source, media_type, settings, index, &reserved) {
-            Ok(Some(plan)) => {
+            Ok(PlanOutcome::Work(plan)) => {
                 reserved.push(plan.final_output.clone());
                 status.output_path = Some(plan.final_output.to_string_lossy().to_string());
                 planned.push(PlannedItem {
                     status,
-                    plan: Some(plan),
+                    plan: Some(*plan),
                 });
             }
-            Ok(None) => {
+            Ok(PlanOutcome::Skip(reason)) => {
                 status.state = BatchItemState::Skipped;
-                status.error = Some("A converted file already exists.".into());
+                status.error = Some(reason);
                 planned.push(PlannedItem { status, plan: None });
             }
             Err(error) => {
@@ -231,17 +233,34 @@ pub fn plan_items(paths: &[String], settings: &BatchSettings) -> Vec<PlannedItem
     planned
 }
 
+/// Outcome of planning one file: real work, or a reason to leave it alone.
+enum PlanOutcome {
+    Work(Box<EncodePlan>),
+    Skip(String),
+}
+
 fn build_plan(
     source: &Path,
     media_type: BatchMediaType,
     settings: &BatchSettings,
     index: usize,
     reserved: &[PathBuf],
-) -> Result<Option<EncodePlan>, String> {
+) -> Result<PlanOutcome, String> {
     let ext = output_extension(media_type, settings, source)?;
     let flags = match media_type {
         BatchMediaType::Video => video_flags(&settings.video),
         BatchMediaType::Image => image_flags(&settings.image, &ext)?,
+    };
+    // Copying the audio stream fails whenever the source codec cannot live in
+    // the target container (PCM in .avi, Vorbis in .mkv). Keep an AAC variant
+    // ready so one bad stream does not lose the whole file.
+    let fallback_flags = match media_type {
+        BatchMediaType::Video if settings.video.audio == AudioMode::Copy => {
+            let mut retry = settings.video.clone();
+            retry.audio = AudioMode::Aac;
+            Some(video_flags(&retry))
+        }
+        _ => None,
     };
 
     let source_dir = source
@@ -265,6 +284,14 @@ fn build_plan(
                 OutputMode::CustomFolder { path } => PathBuf::from(path),
                 OutputMode::ReplaceOriginal { .. } => unreachable!(),
             };
+
+            // Never re-compress what a previous run already produced.
+            if is_inside(source, &dest_dir) {
+                return Ok(PlanOutcome::Skip(
+                    "Already in the output folder — skipped so it is not re-compressed.".into(),
+                ));
+            }
+
             fs::create_dir_all(&dest_dir)
                 .map_err(|e| format!("Cannot create {}: {e}", dest_dir.display()))?;
 
@@ -280,21 +307,33 @@ fn build_plan(
                 &exists,
             )?
             else {
-                return Ok(None);
+                return Ok(PlanOutcome::Skip(
+                    "A converted file already exists.".into(),
+                ));
             };
             (resolved, false, false)
         }
     };
 
-    Ok(Some(EncodePlan {
+    Ok(PlanOutcome::Work(Box::new(EncodePlan {
         input: source.to_path_buf(),
         temp_output: temp_output_path(&final_output, index),
         final_output,
         flags,
+        fallback_flags,
         media_type,
         replace_original,
         backup,
-    }))
+    })))
+}
+
+/// True when `path` lives in `dir` (or below it). Falls back to a plain prefix
+/// check for paths that cannot be canonicalized yet.
+pub fn is_inside(path: &Path, dir: &Path) -> bool {
+    match (path.canonicalize(), dir.canonicalize()) {
+        (Ok(path), Ok(dir)) => path.starts_with(dir),
+        _ => path.starts_with(dir),
+    }
 }
 
 fn sanitize_folder_name(name: &str) -> String {
@@ -417,16 +456,32 @@ fn process_one<E: MediaEncoder, V: BatchEvents>(
         }
     };
 
-    let outcome = encoder
-        .encode(
-            &plan.input,
-            &plan.temp_output,
-            &plan.flags,
-            duration,
-            cancel,
-            &on_progress,
-        )
-        .and_then(|()| finalize_output(plan, settings, encoder, job));
+    let mut attempt = encoder.encode(
+        &plan.input,
+        &plan.temp_output,
+        &plan.flags,
+        duration,
+        cancel,
+        &on_progress,
+    );
+
+    // One retry with re-encoded audio: stream copy fails whenever the source
+    // audio codec cannot be stored in the target container.
+    if let (Err(error), Some(fallback)) = (&attempt, &plan.fallback_flags) {
+        if error != CANCELLED && !cancel.load(Ordering::Relaxed) {
+            let _ = fs::remove_file(&plan.temp_output);
+            attempt = encoder.encode(
+                &plan.input,
+                &plan.temp_output,
+                fallback,
+                duration,
+                cancel,
+                &on_progress,
+            );
+        }
+    }
+
+    let outcome = attempt.and_then(|()| finalize_output(plan, settings, encoder, job));
 
     let status = match outcome {
         Ok(ItemOutcome::Done {
@@ -704,6 +759,8 @@ mod tests {
         /// Bytes written for every produced file.
         output_size: usize,
         fail_on: Option<String>,
+        /// Fails whenever the flags contain this fragment.
+        fail_flag: Option<String>,
         calls: AtomicU32,
     }
 
@@ -712,6 +769,7 @@ mod tests {
             Self {
                 output_size,
                 fail_on: None,
+                fail_flag: None,
                 calls: AtomicU32::new(0),
             }
         }
@@ -726,7 +784,7 @@ mod tests {
             &self,
             input: &Path,
             output: &Path,
-            _flags: &[String],
+            flags: &[String],
             _duration: Option<f64>,
             cancel: &AtomicBool,
             on_progress: &dyn Fn(f32),
@@ -738,6 +796,11 @@ mod tests {
             if let Some(needle) = &self.fail_on {
                 if input.to_string_lossy().contains(needle.as_str()) {
                     return Err("boom".into());
+                }
+            }
+            if let Some(needle) = &self.fail_flag {
+                if flags.join(" ").contains(needle.as_str()) {
+                    return Err("Could not write header (incorrect codec parameters?)".into());
                 }
             }
             on_progress(0.5);
@@ -1039,6 +1102,80 @@ mod tests {
         assert_eq!(plan.media_type, BatchMediaType::Video);
         assert!(plan.flags.join(" ").contains("libx265"));
         assert_eq!(plan.final_output.extension().unwrap(), "mp4");
+    }
+
+    #[test]
+    fn files_already_in_the_output_folder_are_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out");
+        fs::create_dir_all(&out).unwrap();
+        let source = write_source(dir.path(), "a.jpg", 1000);
+        let previous_result = write_source(&out, "b.jpg", 1000);
+
+        let (job, _) = run(
+            vec![source, previous_result],
+            image_settings(OutputMode::CustomFolder {
+                path: out.to_string_lossy().to_string(),
+            }),
+            FakeEncoder::new(100),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.done, 1);
+        assert_eq!(job.skipped, 1);
+        assert!(job.items[1]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("output folder"));
+    }
+
+    #[test]
+    fn audio_copy_failures_retry_with_aac() {
+        let dir = tempfile::tempdir().unwrap();
+        let clip = write_source(dir.path(), "clip.mkv", 1000);
+
+        let mut settings = image_settings(OutputMode::Subfolder {
+            name: "_optimized".into(),
+        });
+        settings.video.audio = AudioMode::Copy;
+
+        let mut encoder = FakeEncoder::new(100);
+        encoder.fail_flag = Some("-c:a copy".into());
+
+        let (job, _) = run(
+            vec![clip],
+            settings,
+            encoder,
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.done, 1, "the AAC retry rescued the file");
+        assert!(dir.path().join("_optimized/clip.mp4").is_file());
+    }
+
+    #[test]
+    fn a_real_failure_is_not_retried_forever() {
+        let dir = tempfile::tempdir().unwrap();
+        let clip = write_source(dir.path(), "clip.mkv", 1000);
+
+        let mut settings = image_settings(OutputMode::Subfolder {
+            name: "_optimized".into(),
+        });
+        settings.video.audio = AudioMode::Copy;
+
+        let mut encoder = FakeEncoder::new(100);
+        encoder.fail_on = Some("clip".into());
+
+        let (job, _) = run(
+            vec![clip],
+            settings,
+            encoder,
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.failed, 1);
+        assert!(no_temp_files(dir.path()));
     }
 
     fn no_temp_files(dir: &Path) -> bool {

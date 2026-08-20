@@ -1,6 +1,31 @@
 # Plan de implementación — Modo Lote (optimización/conversión masiva)
 
-Estado: propuesta, sin implementar. Fecha: 2026-08-17.
+Estado: **fases 1 y 2 implementadas** (2026-08-20). Plan original: 2026-08-17.
+
+## 0. Estado de implementación
+
+Implementado: `src-tauri/src/batch/` (`mod.rs`, `ffmpeg_args.rs`, `runner.rs`),
+`FfmpegTools::encode` con progreso y cancelación, 16 comandos Tauri,
+`UndoAction::ConvertMedia`, presets persistidos, y la UI completa
+(`BatchPanel`, `BatchSelectGrid`, `BatchSettingsForm`, `BatchProgress`,
+`BatchReplaceConfirmDialog`) con atajo Ctrl/⌘+B. 29 tests en `cargo test`.
+
+Añadido sobre el plan, tras revisar el flujo real "carpeta entera → carpeta nueva":
+
+- `scan_folder_media(path, recursive, exclude_dirs)`: coge una carpeta sin
+  abrirla como álbum (no escribe `session.json` dentro).
+- Los archivos que ya están dentro de la carpeta de salida se saltan, para no
+  recomprimir el resultado de una pasada anterior.
+- Reintento automático con AAC cuando `-c:a copy` falla (audio PCM de `.avi`,
+  Vorbis de `.mkv`: no caben en MP4).
+- `get_active_batch_job()` para reengancharse a un job tras recargar la ventana.
+- La selección expande todos los paths del `MediaItem`, así una Live Photo
+  (`.heic` + `.mov`) se convierte entera y no se descabala.
+
+Pendiente: fase 3 completa (aceleración por hardware, estimación previa,
+informe del job en disco, reanudar job) y el QA manual de §10 — la máquina de
+desarrollo no tiene ffmpeg instalado, así que **las cadenas de argumentos no se
+han ejecutado todavía contra un binario real**.
 
 ## 1. Objetivo
 

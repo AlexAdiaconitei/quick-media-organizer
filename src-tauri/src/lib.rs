@@ -70,6 +70,8 @@ pub fn run() {
             commands::get_batch_job,
             commands::finalize_batch_job,
             commands::probe_video_duration,
+            commands::scan_folder_media,
+            commands::get_active_batch_job,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

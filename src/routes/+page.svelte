@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import BatchPanel from "$lib/components/BatchPanel.svelte";
   import FolderPicker from "$lib/components/FolderPicker.svelte";
   import HelpOverlay from "$lib/components/HelpOverlay.svelte";
   import MetadataPanel from "$lib/components/MetadataPanel.svelte";
@@ -43,6 +44,7 @@
   let layoutMode = $state<LayoutMode>("sidebar");
   let showFolderPicker = $state(false);
   let showOptions = $state(false);
+  let showBatch = $state(false);
   let showHelp = $state(false);
   let folderQuery = $state("");
   let folderSelection = $state<string | null>(null);
@@ -131,6 +133,8 @@
   );
 
   const sidebarLayout = $derived(layoutMode === "sidebar" && hasWorkspace);
+
+  const batchQueueAvailable = $derived(!!appState.folder_path && appState.total > 0);
 
   $effect(() => {
     const _metadata = showMetadata;
@@ -545,6 +549,12 @@
       return true;
     }
 
+    if (key === "b") {
+      showBatch = true;
+      flashKey(modLabel("B"));
+      return true;
+    }
+
     if (!hasWorkspace) return false;
 
     if (key === "z") {
@@ -583,6 +593,11 @@
         showOptions = true;
         return;
       }
+      if (mod === "b") {
+        event.preventDefault();
+        showBatch = true;
+        return;
+      }
       return;
     }
 
@@ -599,6 +614,10 @@
         event.preventDefault();
         void confirmFolder();
       }
+      return;
+    }
+
+    if (showBatch) {
       return;
     }
 
@@ -734,6 +753,9 @@
         <button class:active={locale === "es"} onclick={() => changeLocale("es")}>ES</button>
       </div>
       {#if !showWelcome}
+        <button class="ghost-btn" onclick={() => (showBatch = true)}>
+          {t(locale, "batch.open")}
+        </button>
         <button class="ghost-btn" onclick={() => (showOptions = true)} disabled={chromeDisabled}>
           {t(locale, "shortcuts.options")}
         </button>
@@ -790,6 +812,9 @@
           <button class="ghost-btn" onclick={openFolderDialog}>
             {t(locale, "openFolder")}
           </button>
+          <button class="ghost-btn" onclick={() => (showBatch = true)}>
+            {t(locale, "batch.open")}
+          </button>
         </div>
       </div>
     </div>
@@ -799,6 +824,9 @@
         <h2>{t(locale, "noFolder")}</h2>
         <div class="modal-actions">
           <button class="primary-btn" onclick={openFolderDialog}>{t(locale, "openFolder")}</button>
+          <button class="ghost-btn" onclick={() => (showBatch = true)}>
+            {t(locale, "batch.open")}
+          </button>
           <button class="ghost-btn" onclick={() => (showOptions = true)} disabled={chromeDisabled}>
             {t(locale, "shortcuts.options")}
           </button>
@@ -918,6 +946,20 @@
   errorLogPath={errorLogPath}
   onClose={closeOptions}
   onLocaleChange={changeLocale}
+/>
+
+<BatchPanel
+  {locale}
+  open={showBatch}
+  hasQueue={batchQueueAvailable}
+  onClose={() => {
+    showBatch = false;
+    focusRenameInput();
+  }}
+  onSessionChanged={(state) => {
+    appState = state;
+  }}
+  onError={(message) => showToast(message, true, 8000)}
 />
 
 <HelpOverlay {locale} open={showHelp} onClose={closeHelp} />

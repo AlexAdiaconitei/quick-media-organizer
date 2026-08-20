@@ -161,7 +161,10 @@ const messages = {
       alreadyRunning: "A batch job is already running.",
       select: {
         fromQueue: "Files in the open folder",
+        addFolder: "Add folder…",
         addFiles: "Add files…",
+        includeSubfolders: "Include subfolders",
+        folderEmpty: "No photos or videos found in that folder.",
         all: "All",
         none: "None",
         onlyVideos: "Videos",
@@ -433,7 +436,10 @@ const messages = {
       alreadyRunning: "Ya hay un lote en marcha.",
       select: {
         fromQueue: "Archivos de la carpeta abierta",
+        addFolder: "Añadir carpeta…",
         addFiles: "Añadir archivos…",
+        includeSubfolders: "Incluir subcarpetas",
+        folderEmpty: "No se han encontrado fotos ni vídeos en esa carpeta.",
         all: "Todos",
         none: "Ninguno",
         onlyVideos: "Vídeos",

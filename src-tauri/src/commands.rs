@@ -583,3 +583,51 @@ pub fn probe_video_duration(path: String) -> Result<Option<f64>, String> {
     };
     Ok(encoder.probe_duration(Path::new(&path)))
 }
+
+/// Lists the media in a folder for a batch run, without opening it as an
+/// album (no session file is written). `exclude_dirs` keeps a previous run's
+/// output from being fed back in.
+#[tauri::command]
+pub fn scan_folder_media(
+    log: State<'_, SharedErrorLog>,
+    path: String,
+    recursive: bool,
+    exclude_dirs: Vec<String>,
+) -> Result<Vec<MediaItem>, String> {
+    wrap(&log, "scan_folder_media", (|| {
+        let root = PathBuf::from(&path);
+        if !root.is_dir() {
+            return Err(format!("{path} is not a folder."));
+        }
+
+        let excluded: Vec<PathBuf> = exclude_dirs
+            .iter()
+            .filter(|dir| !dir.trim().is_empty())
+            .map(PathBuf::from)
+            .collect();
+
+        let items = crate::media::scan_folder(&root, recursive)?;
+        Ok(items
+            .into_iter()
+            .filter(|item| {
+                !item.paths.iter().any(|file| {
+                    excluded
+                        .iter()
+                        .any(|dir| crate::batch::runner::is_inside(Path::new(file), dir))
+                })
+            })
+            .collect())
+    })())
+}
+
+/// The job currently registered, if any. Lets the panel re-attach to a run
+/// that survived a window reload.
+#[tauri::command]
+pub fn get_active_batch_job(
+    batch: State<'_, SharedBatchState>,
+) -> Result<Option<BatchJobStatus>, String> {
+    let runner = batch.lock().map_err(|e| e.to_string())?;
+    Ok(runner
+        .active_job_id()
+        .and_then(|job_id| runner.snapshot(&job_id)))
+}
