@@ -1,3 +1,4 @@
+mod batch;
 mod commands;
 mod error_log;
 mod fs_util;
@@ -9,6 +10,7 @@ mod session;
 mod state;
 mod video;
 
+use batch::{BatchRunner, SharedBatchState};
 use error_log::{ErrorLog, SharedErrorLog};
 use state::{AppState, SharedState};
 use tauri::Manager;
@@ -26,6 +28,7 @@ pub fn run() {
             let error_log = ErrorLog::new(app_data_dir.clone());
             app.manage(SharedErrorLog::new(error_log));
             app.manage(SharedState::new(AppState::new(app_data_dir)));
+            app.manage(SharedBatchState::new(BatchRunner::new()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -54,6 +57,19 @@ pub fn run() {
             commands::get_error_log,
             commands::get_error_log_path,
             commands::clear_error_log,
+            commands::list_queue_items,
+            commands::describe_media_paths,
+            commands::pick_media_files,
+            commands::get_ffmpeg_capabilities,
+            commands::get_batch_presets,
+            commands::save_batch_preset,
+            commands::delete_batch_preset,
+            commands::get_last_batch_settings,
+            commands::start_batch_job,
+            commands::cancel_batch_job,
+            commands::get_batch_job,
+            commands::finalize_batch_job,
+            commands::probe_video_duration,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

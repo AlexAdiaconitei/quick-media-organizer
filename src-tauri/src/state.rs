@@ -539,8 +539,22 @@ impl AppState {
                 moves,
                 focus_paths,
                 stat_kind,
+            }
+            | UndoAction::ConvertMedia {
+                moves,
+                focus_paths,
+                stat_kind,
+                ..
             } => (moves.clone(), focus_paths.clone(), *stat_kind),
         };
+
+        // A conversion that changed the extension left a second file behind
+        // (a.heic -> a.jpg); remove it before restoring the backup.
+        if let UndoAction::ConvertMedia { remove_paths, .. } = &action {
+            for path in remove_paths {
+                let _ = std::fs::remove_file(path);
+            }
+        }
 
         let mut reverted: Vec<PathPair> = Vec::new();
         for pair in &moves {
@@ -659,6 +673,126 @@ impl AppState {
         } else {
             self.session_complete = true;
         }
+    }
+
+    /// Full queue, for the batch selection grid.
+    pub fn list_items(&self) -> Vec<MediaItem> {
+        self.items.clone()
+    }
+
+    /// Registers an in-place batch conversion so it can be undone, and rebuilds
+    /// the queue (names and extensions may have changed).
+    pub fn apply_batch_replacements(
+        &mut self,
+        replacements: &[(String, String, String)],
+    ) -> Result<usize, String> {
+        if replacements.is_empty() {
+            if let Some(item) = self.items.get_mut(self.current_index) {
+                refresh_item_size(item);
+            }
+            return Ok(0);
+        }
+
+        let mut moves: Vec<PathPair> = Vec::new();
+        let mut focus_paths: Vec<String> = Vec::new();
+        let mut remove_paths: Vec<String> = Vec::new();
+
+        for (backup, original, converted) in replacements {
+            moves.push(PathPair {
+                from: backup.clone(),
+                to: original.clone(),
+            });
+            focus_paths.push(original.clone());
+            if converted != original {
+                remove_paths.push(converted.clone());
+            }
+        }
+
+        let count = moves.len();
+        self.push_undo(UndoAction::ConvertMedia {
+            moves,
+            focus_paths: focus_paths.clone(),
+            stat_kind: UndoStatKind::None,
+            remove_paths,
+        });
+
+        let current_paths = self
+            .current_item()
+            .map(|item| item.paths.clone())
+            .unwrap_or_default();
+        self.rescan_preserving_position(&current_paths);
+        self.persist_session_best_effort();
+        Ok(count)
+    }
+
+    /// Re-scans the open folder and keeps the queue on `focus_paths` when it
+    /// still exists, otherwise on the closest position.
+    fn rescan_preserving_position(&mut self, focus_paths: &[String]) {
+        let Some(folder) = self.folder_path.clone() else {
+            return;
+        };
+        let previous_index = self.current_index;
+        let Ok(mut items) = scan_folder(&folder, self.scan_recursive) else {
+            return;
+        };
+        prepare_sorted_items(&mut items, self.sort_mode);
+        self.items = items;
+
+        if let Some(idx) = self.find_item_index_by_paths(focus_paths, &self.items) {
+            self.current_index = idx;
+        } else if self.items.is_empty() {
+            self.current_index = 0;
+        } else {
+            self.current_index = previous_index.min(self.items.len() - 1);
+        }
+        self.session_complete = self.items.is_empty();
+        self.mark_subfolders_dirty();
+    }
+
+    pub fn batch_presets(&self) -> Vec<crate::batch::BatchPreset> {
+        self.app_settings.batch_presets.clone()
+    }
+
+    pub fn save_batch_preset(
+        &mut self,
+        preset: crate::batch::BatchPreset,
+    ) -> Result<Vec<crate::batch::BatchPreset>, String> {
+        if let Some(existing) = self
+            .app_settings
+            .batch_presets
+            .iter_mut()
+            .find(|p| p.id == preset.id)
+        {
+            *existing = preset;
+        } else {
+            self.app_settings.batch_presets.push(preset);
+        }
+        save_app_settings(&self.app_data_dir, &self.app_settings)?;
+        Ok(self.app_settings.batch_presets.clone())
+    }
+
+    pub fn delete_batch_preset(
+        &mut self,
+        id: &str,
+    ) -> Result<Vec<crate::batch::BatchPreset>, String> {
+        self.app_settings.batch_presets.retain(|p| p.id != id);
+        save_app_settings(&self.app_data_dir, &self.app_settings)?;
+        Ok(self.app_settings.batch_presets.clone())
+    }
+
+    /// Remembers the last used batch settings. Destructive output modes are
+    /// never remembered as such: they come back as "write to a subfolder" so
+    /// the confirmation dialog has to be answered again.
+    pub fn remember_batch_settings(
+        &mut self,
+        settings: &crate::batch::BatchSettings,
+    ) -> Result<(), String> {
+        let mut stored = settings.clone();
+        if matches!(stored.output, crate::batch::OutputMode::ReplaceOriginal { .. }) {
+            stored.output = crate::batch::OutputMode::default();
+        }
+        self.app_settings.last_batch_settings = Some(stored);
+        save_app_settings(&self.app_data_dir, &self.app_settings)
     }
 
     pub fn set_armed_folder(&mut self, folder: Option<String>) -> Result<(), String> {
@@ -892,6 +1026,9 @@ impl AppState {
                     }
                     self.mark_subfolders_dirty();
                 }
+            }
+            UndoAction::ConvertMedia { .. } => {
+                self.rescan_preserving_position(focus_paths);
             }
             UndoAction::TrimVideo { .. } => {
                 if let Some(idx) = self.find_item_index_by_paths(focus_paths, &self.items) {

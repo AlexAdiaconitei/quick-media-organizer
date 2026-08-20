@@ -153,6 +153,10 @@ pub struct AppSettings {
     pub video_with_sound: bool,
     #[serde(default)]
     pub last_folder_path: Option<String>,
+    #[serde(default)]
+    pub batch_presets: Vec<crate::batch::BatchPreset>,
+    #[serde(default)]
+    pub last_batch_settings: Option<crate::batch::BatchSettings>,
 }
 
 fn default_show_metadata() -> bool {
@@ -169,6 +173,8 @@ impl Default for AppSettings {
             show_metadata: true,
             video_with_sound: false,
             last_folder_path: None,
+            batch_presets: Vec::new(),
+            last_batch_settings: None,
         }
     }
 }
@@ -210,6 +216,18 @@ pub enum UndoAction {
         focus_paths: Vec<String>,
         #[serde(default)]
         stat_kind: UndoStatKind,
+    },
+    /// Batch conversion that replaced originals in place. `moves` restores each
+    /// backup over its original path; `remove_paths` holds converted files that
+    /// changed extension (.heic -> .jpg) and must be deleted first.
+    ConvertMedia {
+        moves: Vec<PathPair>,
+        #[serde(default)]
+        focus_paths: Vec<String>,
+        #[serde(default)]
+        stat_kind: UndoStatKind,
+        #[serde(default)]
+        remove_paths: Vec<String>,
     },
 }
 

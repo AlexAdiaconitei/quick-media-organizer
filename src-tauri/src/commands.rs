@@ -1,11 +1,20 @@
+use crate::batch::runner::{
+    new_job_status, plan_items, BatchEvents, FfmpegEncoder, MediaEncoder, SharedBatchState,
+};
+use crate::batch::{
+    BatchItemStatus, BatchJobStatus, BatchPreset, BatchProgressSummary, BatchSettings,
+    FfmpegCapabilities, OutputMode,
+};
 use crate::error_log::{ErrorEntry, SharedErrorLog};
 use crate::models::{
-    ActionResult, AppSettings, FrontendState, LayoutMode, RenameMode, SortMode,
+    ActionResult, AppSettings, FrontendState, LayoutMode, MediaItem, RenameMode, SortMode,
 };
 use crate::state::SharedState;
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, State};
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter, State};
 
 fn log_rust_error(log: &SharedErrorLog, command: &str, error: &str) {
     if let Ok(guard) = log.lock() {
@@ -287,4 +296,290 @@ pub fn trim_current_video(
             .map_err(|e| e.to_string())?
             .trim_current_video(trim_start, trim_end),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Batch optimization / conversion
+// ---------------------------------------------------------------------------
+
+const MEDIA_FILTER_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp", "tiff", "tif", "mp4", "mov",
+    "m4v", "avi", "mkv", "3gp",
+];
+
+/// Forwards runner updates to the window. Channel names are prefixed so they
+/// cannot collide with other events.
+struct WindowEvents {
+    app: AppHandle,
+}
+
+impl BatchEvents for WindowEvents {
+    fn item(&self, item: &BatchItemStatus) {
+        let _ = self.app.emit("batch://item", item);
+    }
+
+    fn progress(&self, summary: &BatchProgressSummary) {
+        let _ = self.app.emit("batch://progress", summary);
+    }
+
+    fn done(&self, job: &BatchJobStatus) {
+        let _ = self.app.emit("batch://done", job);
+    }
+}
+
+#[tauri::command]
+pub fn list_queue_items(state: State<'_, SharedState>) -> Result<Vec<MediaItem>, String> {
+    Ok(state.lock().map_err(|e| e.to_string())?.list_items())
+}
+
+/// Metadata for files picked outside the open album.
+#[tauri::command]
+pub fn describe_media_paths(paths: Vec<String>) -> Result<Vec<MediaItem>, String> {
+    Ok(paths
+        .iter()
+        .filter(|path| Path::new(path).is_file())
+        .map(|path| {
+            let mut item = crate::media::build_media_item_from_paths(&[path.clone()]);
+            crate::media::enrich_item_metadata(&mut item);
+            item
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn pick_media_files(app: AppHandle) -> Result<Vec<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let files = app
+        .dialog()
+        .file()
+        .add_filter("Photos and videos", MEDIA_FILTER_EXTENSIONS)
+        .blocking_pick_files();
+
+    Ok(files
+        .unwrap_or_default()
+        .into_iter()
+        .map(|file| file.to_string())
+        .collect())
+}
+
+#[tauri::command]
+pub fn get_ffmpeg_capabilities(
+    log: State<'_, SharedErrorLog>,
+) -> Result<FfmpegCapabilities, String> {
+    match crate::video::FfmpegTools::locate() {
+        Ok(tools) => Ok(tools.capabilities()),
+        Err(error) => {
+            log_rust_error(&log, "get_ffmpeg_capabilities", &error);
+            Ok(FfmpegCapabilities::default())
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_batch_presets(state: State<'_, SharedState>) -> Result<Vec<BatchPreset>, String> {
+    Ok(state.lock().map_err(|e| e.to_string())?.batch_presets())
+}
+
+#[tauri::command]
+pub fn save_batch_preset(
+    state: State<'_, SharedState>,
+    log: State<'_, SharedErrorLog>,
+    preset: BatchPreset,
+) -> Result<Vec<BatchPreset>, String> {
+    wrap(
+        &log,
+        "save_batch_preset",
+        state
+            .lock()
+            .map_err(|e| e.to_string())?
+            .save_batch_preset(preset),
+    )
+}
+
+#[tauri::command]
+pub fn delete_batch_preset(
+    state: State<'_, SharedState>,
+    log: State<'_, SharedErrorLog>,
+    id: String,
+) -> Result<Vec<BatchPreset>, String> {
+    wrap(
+        &log,
+        "delete_batch_preset",
+        state
+            .lock()
+            .map_err(|e| e.to_string())?
+            .delete_batch_preset(&id),
+    )
+}
+
+#[tauri::command]
+pub fn get_last_batch_settings(
+    state: State<'_, SharedState>,
+) -> Result<Option<BatchSettings>, String> {
+    Ok(state
+        .lock()
+        .map_err(|e| e.to_string())?
+        .app_settings
+        .last_batch_settings
+        .clone())
+}
+
+/// Starts a batch job. Long encodes run on their own threads: the app-state
+/// mutex is never held while ffmpeg works.
+#[tauri::command]
+pub fn start_batch_job(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+    batch: State<'_, SharedBatchState>,
+    log: State<'_, SharedErrorLog>,
+    paths: Vec<String>,
+    settings: BatchSettings,
+) -> Result<BatchJobStatus, String> {
+    wrap(&log, "start_batch_job", (|| {
+        if paths.is_empty() {
+            return Err("Select at least one photo or video.".into());
+        }
+
+        // Destructive runs must carry the confirmation the dialog sets. This is
+        // checked before a single file is touched.
+        if let OutputMode::ReplaceOriginal { confirmed, .. } = &settings.output {
+            if !confirmed {
+                return Err(
+                    "Replacing originals was not confirmed — open the confirmation dialog first."
+                        .into(),
+                );
+            }
+        }
+
+        let encoder = Arc::new(FfmpegEncoder::locate()?);
+
+        {
+            let runner = batch.lock().map_err(|e| e.to_string())?;
+            if let Some(active) = runner.active_job_id() {
+                if runner
+                    .snapshot(&active)
+                    .map(|job| job.running)
+                    .unwrap_or(false)
+                {
+                    return Err("A batch job is already running.".into());
+                }
+            }
+        }
+
+        let plans = plan_items(&paths, &settings);
+        let statuses: Vec<BatchItemStatus> =
+            plans.iter().map(|planned| planned.status.clone()).collect();
+        let output_dir = plans
+            .iter()
+            .find_map(|planned| planned.plan.as_ref())
+            .and_then(|plan| plan.final_output.parent())
+            .map(|dir| dir.to_string_lossy().to_string());
+        let replaces_originals = matches!(settings.output, OutputMode::ReplaceOriginal { .. });
+
+        let job_id = {
+            let mut runner = batch.lock().map_err(|e| e.to_string())?;
+            runner.next_job_id()
+        };
+        let job = Arc::new(Mutex::new(new_job_status(
+            job_id.clone(),
+            statuses,
+            output_dir,
+            replaces_originals,
+        )));
+        let cancel = Arc::new(AtomicBool::new(false));
+
+        {
+            let mut runner = batch.lock().map_err(|e| e.to_string())?;
+            runner.register(Arc::clone(&job), Arc::clone(&cancel), &job_id);
+        }
+
+        if let Ok(mut guard) = state.lock() {
+            let _ = guard.remember_batch_settings(&settings);
+        }
+
+        let snapshot = job.lock().map_err(|e| e.to_string())?.clone();
+
+        let events = Arc::new(WindowEvents { app: app.clone() });
+        let thread_job = Arc::clone(&job);
+        std::thread::spawn(move || {
+            crate::batch::runner::run_job(thread_job, plans, settings, encoder, events, cancel);
+        });
+
+        Ok(snapshot)
+    })())
+}
+
+#[tauri::command]
+pub fn cancel_batch_job(batch: State<'_, SharedBatchState>, job_id: String) -> Result<(), String> {
+    batch.lock().map_err(|e| e.to_string())?.cancel(&job_id)
+}
+
+#[tauri::command]
+pub fn get_batch_job(
+    batch: State<'_, SharedBatchState>,
+    job_id: String,
+) -> Result<BatchJobStatus, String> {
+    batch
+        .lock()
+        .map_err(|e| e.to_string())?
+        .snapshot(&job_id)
+        .ok_or_else(|| format!("Unknown batch job: {job_id}"))
+}
+
+/// Applies a finished job to the open session: registers the undo entry for
+/// replaced originals and rebuilds the queue. Safe to call twice.
+#[tauri::command]
+pub fn finalize_batch_job(
+    state: State<'_, SharedState>,
+    batch: State<'_, SharedBatchState>,
+    log: State<'_, SharedErrorLog>,
+    job_id: String,
+) -> Result<FrontendState, String> {
+    wrap(&log, "finalize_batch_job", (|| {
+        let replacements = {
+            let runner = batch.lock().map_err(|e| e.to_string())?;
+            let handle = runner
+                .job(&job_id)
+                .ok_or_else(|| format!("Unknown batch job: {job_id}"))?;
+            let mut guard = handle.lock().map_err(|e| e.to_string())?;
+            if guard.running {
+                return Err("The batch job is still running.".into());
+            }
+            if guard.finalized {
+                Vec::new()
+            } else {
+                guard.finalized = true;
+                guard
+                    .replacements
+                    .iter()
+                    .map(|r| {
+                        (
+                            r.backup_path.clone(),
+                            r.original_path.clone(),
+                            r.converted_path.clone(),
+                        )
+                    })
+                    .collect()
+            }
+        };
+
+        {
+            let mut runner = batch.lock().map_err(|e| e.to_string())?;
+            runner.clear_active(&job_id);
+        }
+
+        let mut guard = state.lock().map_err(|e| e.to_string())?;
+        guard.apply_batch_replacements(&replacements)?;
+        Ok(guard.to_frontend_state())
+    })())
+}
+
+/// Duration of one file, for the batch selection list.
+#[tauri::command]
+pub fn probe_video_duration(path: String) -> Result<Option<f64>, String> {
+    let Ok(encoder) = FfmpegEncoder::locate() else {
+        return Ok(None);
+    };
+    Ok(encoder.probe_duration(Path::new(&path)))
 }

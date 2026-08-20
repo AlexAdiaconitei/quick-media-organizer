@@ -1,10 +1,13 @@
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
+use crate::batch::FfmpegCapabilities;
 use crate::models::{VideoPreviewInfo, VideoPreviewMode};
 
 const WEB_NATIVE_EXTENSIONS: &[&str] = &["mp4", "mov", "m4v"];
@@ -22,7 +25,7 @@ impl FfmpegTools {
     }
 
     pub fn probe_duration(&self, path: &Path) -> Result<f64, String> {
-        let output = Command::new(&self.ffprobe)
+        let output = no_window_command(&self.ffprobe)
             .args([
                 "-v",
                 "error",
@@ -59,7 +62,7 @@ impl FfmpegTools {
             return Err("Trim range is too short.".into());
         }
 
-        let output = Command::new(&self.ffmpeg)
+        let output = no_window_command(&self.ffmpeg)
             .arg("-y")
             .arg("-i")
             .arg(input)
@@ -92,7 +95,7 @@ impl FfmpegTools {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
 
-        let output_cmd = Command::new(&self.ffmpeg)
+        let output_cmd = no_window_command(&self.ffmpeg)
             .arg("-y")
             .arg("-i")
             .arg(input)
@@ -119,7 +122,7 @@ impl FfmpegTools {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
 
-        let output_cmd = Command::new(&self.ffmpeg)
+        let output_cmd = no_window_command(&self.ffmpeg)
             .arg("-y")
             .arg("-ss")
             .arg("0.5")
@@ -142,6 +145,152 @@ impl FfmpegTools {
             String::from_utf8_lossy(&output_cmd.stderr)
         ))
     }
+
+    /// Runs ffmpeg to completion, streaming progress from `-progress pipe:1`.
+    ///
+    /// `flags` are the arguments between input and output (see
+    /// `crate::batch::ffmpeg_args`). Returns [`CANCELLED`] as the error message
+    /// when `cancel` is raised, so callers can tell it apart from a real
+    /// failure.
+    pub fn encode(
+        &self,
+        input: &Path,
+        output: &Path,
+        flags: &[String],
+        total_duration: Option<f64>,
+        cancel: &AtomicBool,
+        on_progress: &dyn Fn(f32),
+    ) -> Result<(), String> {
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        let mut command = no_window_command(&self.ffmpeg);
+        command
+            .arg("-hide_banner")
+            .arg("-nostdin")
+            .arg("-y")
+            .arg("-i")
+            .arg(input)
+            .args(flags)
+            .arg("-progress")
+            .arg("pipe:1")
+            .arg("-nostats")
+            .arg(output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("Failed to run ffmpeg: {e}"))?;
+
+        // ffmpeg writes diagnostics to stderr; drain it on its own thread so a
+        // full pipe buffer cannot deadlock the progress reader.
+        let stderr = child.stderr.take();
+        let stderr_handle = std::thread::spawn(move || {
+            let mut tail = String::new();
+            if let Some(stderr) = stderr {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    tail.push_str(&line);
+                    tail.push('\n');
+                    if tail.len() > 8000 {
+                        let cut = tail.len() - 4000;
+                        tail = tail.split_off(cut);
+                    }
+                }
+            }
+            tail
+        });
+
+        let mut killed = false;
+        if let Some(stdout) = child.stdout.take() {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if cancel.load(Ordering::Relaxed) {
+                    let _ = child.kill();
+                    killed = true;
+                    break;
+                }
+                if let Some(progress) = parse_progress_line(&line, total_duration) {
+                    on_progress(progress);
+                }
+            }
+        }
+
+        if !killed && cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            killed = true;
+        }
+
+        let status = child
+            .wait()
+            .map_err(|e| format!("Failed to wait for ffmpeg: {e}"))?;
+        let stderr_tail = stderr_handle.join().unwrap_or_default();
+
+        if killed {
+            return Err(CANCELLED.to_string());
+        }
+
+        if status.success() {
+            on_progress(1.0);
+            return Ok(());
+        }
+
+        Err(format!("ffmpeg failed: {}", stderr_tail.trim()))
+    }
+
+    /// Which encoders/decoders this ffmpeg build actually ships, so the UI can
+    /// hide codecs that would fail and warn about HEIC before starting a job.
+    pub fn capabilities(&self) -> FfmpegCapabilities {
+        let encoders = self.run_text(&["-hide_banner", "-encoders"]).unwrap_or_default();
+        let demuxers = self.run_text(&["-hide_banner", "-demuxers"]).unwrap_or_default();
+        let version = self
+            .run_text(&["-hide_banner", "-version"])
+            .and_then(|text| text.lines().next().map(|l| l.trim().to_string()));
+
+        FfmpegCapabilities {
+            available: true,
+            h264: encoders.contains("libx264"),
+            h265: encoders.contains("libx265"),
+            av1: encoders.contains("libsvtav1"),
+            webp: encoders.contains("libwebp"),
+            avif: encoders.contains("libaom-av1"),
+            heic_decode: demuxers.contains("heif") || demuxers.contains("HEIF"),
+            version,
+        }
+    }
+
+    fn run_text(&self, args: &[&str]) -> Option<String> {
+        let output = no_window_command(&self.ffmpeg).args(args).output().ok()?;
+        let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        Some(text)
+    }
+}
+
+/// Error message used when a job was cancelled rather than failing.
+pub const CANCELLED: &str = "__cancelled__";
+
+/// Parses one `key=value` line of ffmpeg's `-progress` stream into 0..1.
+fn parse_progress_line(line: &str, total_duration: Option<f64>) -> Option<f32> {
+    let total = total_duration.filter(|d| *d > 0.0)?;
+    let value = line.strip_prefix("out_time_us=").or_else(|| line.strip_prefix("out_time_ms="))?;
+    let micros: f64 = value.trim().parse().ok()?;
+    // out_time_ms is actually microseconds in ffmpeg's progress output.
+    let seconds = micros / 1_000_000.0;
+    Some(((seconds / total) as f32).clamp(0.0, 1.0))
+}
+
+/// Spawns console-less on Windows; a plain `Command` everywhere else.
+pub fn no_window_command(program: &Path) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
 }
 
 fn find_binary(name: &str) -> Result<PathBuf, String> {
@@ -162,7 +311,7 @@ fn find_binary(name: &str) -> Result<PathBuf, String> {
     };
 
     for candidate in candidates {
-        if Command::new(&candidate)
+        if no_window_command(Path::new(&candidate))
             .arg("-version")
             .output()
             .map(|o| o.status.success())

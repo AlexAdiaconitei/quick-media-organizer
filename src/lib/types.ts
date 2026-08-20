@@ -74,3 +74,121 @@ export interface MediaFileDiagnosis {
   issue: "empty" | "too_small" | "content_mismatch" | "unknown";
   size_bytes: number;
 }
+
+// --- Batch optimization / conversion -------------------------------------
+
+export type BatchMediaType = "video" | "image";
+export type VideoCodec = "h264" | "h265" | "av1" | "copy";
+export type ImageFormat = "jpeg" | "webp" | "avif" | "png" | "keep";
+export type AudioMode = "copy" | "aac" | "drop";
+export type ConflictPolicy = "skip" | "rename" | "overwrite";
+export type BatchItemState =
+  | "pending"
+  | "running"
+  | "done"
+  | "skipped"
+  | "failed"
+  | "cancelled";
+
+export interface VideoSettings {
+  codec: VideoCodec;
+  crf: number;
+  speed_preset: string;
+  max_height?: number | null;
+  max_fps?: number | null;
+  audio: AudioMode;
+  audio_bitrate_kbps: number;
+  faststart: boolean;
+  keep_metadata: boolean;
+}
+
+export interface ImageConvertSettings {
+  format: ImageFormat;
+  quality: number;
+  max_edge?: number | null;
+  keep_metadata: boolean;
+}
+
+export type OutputMode =
+  | { mode: "subfolder"; name: string }
+  | { mode: "custom_folder"; path: string }
+  | { mode: "replace_original"; backup: boolean; confirmed: boolean };
+
+export interface BatchSettings {
+  video: VideoSettings;
+  image: ImageConvertSettings;
+  output: OutputMode;
+  name_suffix?: string | null;
+  on_conflict: ConflictPolicy;
+  skip_if_larger: boolean;
+  skip_if_savings_below_pct?: number | null;
+  concurrency: number;
+  preserve_timestamps: boolean;
+}
+
+export interface BatchItemStatus {
+  id: string;
+  source_path: string;
+  file_name: string;
+  media_type: BatchMediaType;
+  state: BatchItemState;
+  progress: number;
+  size_before: number;
+  size_after?: number | null;
+  output_path?: string | null;
+  error?: string | null;
+}
+
+export interface BatchReplacement {
+  backup_path: string;
+  original_path: string;
+  converted_path: string;
+}
+
+export interface BatchJobStatus {
+  job_id: string;
+  running: boolean;
+  cancelled: boolean;
+  total: number;
+  done: number;
+  failed: number;
+  skipped: number;
+  bytes_before: number;
+  bytes_after: number;
+  started_at: string;
+  finished_at?: string | null;
+  output_dir?: string | null;
+  replaces_originals: boolean;
+  items: BatchItemStatus[];
+  replacements: BatchReplacement[];
+  finalized: boolean;
+}
+
+export interface BatchProgressSummary {
+  job_id: string;
+  running: boolean;
+  cancelled: boolean;
+  total: number;
+  done: number;
+  failed: number;
+  skipped: number;
+  bytes_before: number;
+  bytes_after: number;
+}
+
+export interface BatchPreset {
+  id: string;
+  name: string;
+  settings: BatchSettings;
+}
+
+export interface FfmpegCapabilities {
+  available: boolean;
+  h264: boolean;
+  h265: boolean;
+  av1: boolean;
+  webp: boolean;
+  avif: boolean;
+  heic_decode: boolean;
+  version?: string | null;
+}
