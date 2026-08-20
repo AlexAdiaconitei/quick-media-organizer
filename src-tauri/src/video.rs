@@ -243,6 +243,7 @@ impl FfmpegTools {
     /// hide codecs that would fail and warn about HEIC before starting a job.
     pub fn capabilities(&self) -> FfmpegCapabilities {
         let encoders = self.run_text(&["-hide_banner", "-encoders"]).unwrap_or_default();
+        let decoders = self.run_text(&["-hide_banner", "-decoders"]).unwrap_or_default();
         let demuxers = self.run_text(&["-hide_banner", "-demuxers"]).unwrap_or_default();
         let version = self
             .run_text(&["-hide_banner", "-version"])
@@ -255,7 +256,9 @@ impl FfmpegTools {
             av1: encoders.contains("libsvtav1"),
             webp: encoders.contains("libwebp"),
             avif: encoders.contains("libaom-av1"),
-            heic_decode: demuxers.contains("heif") || demuxers.contains("HEIF"),
+            // HEIC/HEIF files are ISOBMFF: ffmpeg reads them through the mov
+            // demuxer plus the hevc decoder, not through a "heif" demuxer.
+            heic_decode: decoders.contains("hevc") && demuxers.contains("mov,mp4"),
             version,
         }
     }

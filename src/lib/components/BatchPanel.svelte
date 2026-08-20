@@ -12,6 +12,7 @@
     dedupeItems,
     defaultBatchSettings,
     formatSize,
+    isTauriAvailable,
     loadCapabilities,
     loadQueueItems,
     pickFiles,
@@ -89,18 +90,31 @@
     `${selectedItems[0]?.paths[0]?.replace(/[/\\][^/\\]*$/, "") ?? ""}/.quick-media-organizer/batch-backups/`,
   );
 
+  /// Never throws when the IPC bridge is missing, so running the frontend in a
+  /// plain browser degrades instead of spamming unhandled rejections.
+  function safeListen<T>(
+    event: string,
+    handler: (payload: T) => void,
+  ): Promise<UnlistenFn | null> {
+    try {
+      return listen<T>(event, (message) => handler(message.payload)).catch(() => null);
+    } catch {
+      return Promise.resolve(null);
+    }
+  }
+
   onMount(() => {
-    const unlisteners: Promise<UnlistenFn>[] = [
-      listen<BatchItemStatus>("batch://item", (event) => applyItemUpdate(event.payload)),
-      listen<BatchProgressSummary>("batch://progress", (event) =>
-        applyProgress(event.payload),
-      ),
-      listen<BatchJobStatus>("batch://done", (event) => void applyDone(event.payload)),
+    if (!isTauriAvailable()) return;
+
+    const unlisteners = [
+      safeListen<BatchItemStatus>("batch://item", applyItemUpdate),
+      safeListen<BatchProgressSummary>("batch://progress", applyProgress),
+      safeListen<BatchJobStatus>("batch://done", (job) => void applyDone(job)),
     ];
 
     return () => {
       for (const pending of unlisteners) {
-        void pending.then((unlisten) => unlisten());
+        void pending.then((unlisten) => unlisten?.());
       }
     };
   });
@@ -112,6 +126,12 @@
   });
 
   async function initialize() {
+    if (!isTauriAvailable()) {
+      // Browser preview: show the panel but make it clear nothing can run.
+      capabilities = { ...capabilities, available: false };
+      return;
+    }
+
     busy = true;
     try {
       capabilities = await loadCapabilities();

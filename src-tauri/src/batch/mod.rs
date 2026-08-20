@@ -1,4 +1,6 @@
 pub mod ffmpeg_args;
+#[cfg(test)]
+mod ffmpeg_smoke;
 pub mod runner;
 
 use serde::{Deserialize, Serialize};

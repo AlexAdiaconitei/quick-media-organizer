@@ -8,6 +8,12 @@ import type {
   MediaItem,
 } from "./types";
 
+/// False in a plain browser (`pnpm dev` without the Tauri shell): there is no
+/// IPC bridge, so invoke/listen would throw on every call.
+export function isTauriAvailable(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 export function defaultBatchSettings(): BatchSettings {
   return {
     video: {
