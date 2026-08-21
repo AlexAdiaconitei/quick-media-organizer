@@ -7,10 +7,12 @@
   let {
     locale,
     open,
+    repositoryUrl = null,
     onClose,
   }: {
     locale: Locale;
     open: boolean;
+    repositoryUrl?: string | null;
     onClose: () => void;
   } = $props();
 </script>
@@ -46,7 +48,7 @@
       <p>{t(locale, "help.faqDates")}</p>
       <p>{t(locale, "help.modifierHint")}</p>
 
-      <SupportBlock {locale} compact />
+      <SupportBlock {locale} compact {repositoryUrl} />
 
       <div class="modal-actions">
         <button type="button" class="primary-btn" onclick={onClose}>{t(locale, "common.ok")}</button>

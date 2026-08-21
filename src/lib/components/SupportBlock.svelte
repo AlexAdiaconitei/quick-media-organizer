@@ -5,9 +5,12 @@
   let {
     locale,
     compact = false,
+    repositoryUrl = null,
   }: {
     locale: Locale;
     compact?: boolean;
+    /// Repository this build came from; hidden when it cannot be resolved.
+    repositoryUrl?: string | null;
   } = $props();
 </script>
 
@@ -35,6 +38,15 @@
         onclick={() => void openExternal(LINKS.linkedIn)}
       >
         {t(locale, "support.linkedin")}
+      </button>
+    {/if}
+    {#if repositoryUrl}
+      <button
+        type="button"
+        class="support-btn"
+        onclick={() => void openExternal(repositoryUrl)}
+      >
+        {t(locale, "support.github")}
       </button>
     {/if}
   </div>

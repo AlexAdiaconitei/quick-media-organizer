@@ -5,6 +5,7 @@ export interface UpdateContext {
   current_version: string;
   updater_configured: boolean;
   releases_url?: string | null;
+  repository_url?: string | null;
 }
 
 export interface AvailableUpdate {

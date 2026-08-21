@@ -640,6 +640,8 @@ pub struct UpdateContext {
     pub updater_configured: bool,
     /// Releases page of whichever repository published this build.
     pub releases_url: Option<String>,
+    /// Repository this build came from, for the "view on GitHub" link.
+    pub repository_url: Option<String>,
 }
 
 /// Derives the repository from the updater endpoint baked into the build, so a
@@ -667,10 +669,19 @@ pub fn get_update_context(app: AppHandle) -> Result<UpdateContext, String> {
         .and_then(|endpoint| endpoint.as_str())
         .map(str::to_string);
 
+    let releases_url = endpoint.as_deref().and_then(releases_url_from_endpoint);
+    let repository_url = releases_url
+        .as_deref()
+        .and_then(|url| url.strip_suffix("/releases").map(str::to_string))
+        // Builds without an updater still know where they came from: build.rs
+        // records it from CI or from the git remote.
+        .or_else(|| option_env!("QMO_REPOSITORY_URL").map(str::to_string));
+
     Ok(UpdateContext {
         current_version: app.package_info().version.to_string(),
         updater_configured: endpoint.is_some(),
-        releases_url: endpoint.as_deref().and_then(releases_url_from_endpoint),
+        releases_url,
+        repository_url,
     })
 }
 
@@ -688,5 +699,15 @@ mod tests {
             Some("https://github.com/someone/quick-media-organizer/releases")
         );
         assert_eq!(releases_url_from_endpoint("https://example.com/feed.json"), None);
+    }
+
+    #[test]
+    fn the_build_records_where_it_came_from() {
+        // build.rs resolves this from CI or the git remote; a checkout without
+        // either simply has no link to show.
+        if let Some(url) = option_env!("QMO_REPOSITORY_URL") {
+            assert!(url.starts_with("https://"), "unexpected repository url: {url}");
+            assert!(!url.ends_with(".git"), "the .git suffix must be stripped: {url}");
+        }
     }
 }

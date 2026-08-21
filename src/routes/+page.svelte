@@ -63,6 +63,7 @@
   let trimNotice = $state("");
   let availableUpdate = $state<AvailableUpdate | null>(null);
   let releasesUrl = $state<string | null>(null);
+  let repositoryUrl = $state<string | null>(null);
   let showUpdate = $state(false);
   let installingUpdate = $state(false);
   let updateProgress = $state(0);
@@ -249,6 +250,7 @@
   async function scheduleUpdateCheck() {
     const context = await loadUpdateContext();
     releasesUrl = context?.releases_url ?? null;
+    repositoryUrl = context?.repository_url ?? null;
     if (!context?.updater_configured) return;
 
     setTimeout(() => {
@@ -1079,6 +1081,7 @@
   bind:renameMode={appState.rename_mode}
   bind:layoutMode
   bind:videoWithSound
+  {repositoryUrl}
   errorLogCount={errorLogCount}
   errorLogPath={errorLogPath}
   onClose={closeOptions}
@@ -1115,6 +1118,6 @@
   onClose={() => (showUpdate = false)}
 />
 
-<HelpOverlay {locale} open={showHelp} onClose={closeHelp} />
+<HelpOverlay {locale} open={showHelp} {repositoryUrl} onClose={closeHelp} />
 
 <Toast message={toastMessage} error={toastError} onDismiss={dismissToast} />

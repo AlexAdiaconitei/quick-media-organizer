@@ -8,6 +8,7 @@
   let {
     locale,
     open,
+    repositoryUrl = null,
     sortMode = $bindable<SortMode>("exif_date"),
     scanRecursive = $bindable(false),
     renameMode = $bindable<RenameMode>("free"),
@@ -20,6 +21,7 @@
   }: {
     locale: Locale;
     open: boolean;
+    repositoryUrl?: string | null;
     sortMode?: SortMode;
     scanRecursive?: boolean;
     renameMode?: RenameMode;
@@ -123,7 +125,7 @@
         {/if}
       </div>
 
-      <SupportBlock {locale} />
+      <SupportBlock {locale} {repositoryUrl} />
 
       <div class="modal-actions">
         <button type="button" class="primary-btn" onclick={onClose}>{t(locale, "common.ok")}</button>

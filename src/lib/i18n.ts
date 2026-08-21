@@ -302,6 +302,7 @@ const messages = {
       coffee: "Buy me a coffee",
       email: "Email",
       linkedin: "LinkedIn",
+      github: "View on GitHub",
     },
   },
   es: {
@@ -603,6 +604,7 @@ const messages = {
       coffee: "Invítame a un café",
       email: "Email",
       linkedin: "LinkedIn",
+      github: "Ver en GitHub",
     },
   },
 } as const;
