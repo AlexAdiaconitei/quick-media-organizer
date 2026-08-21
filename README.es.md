@@ -98,8 +98,18 @@ Sí. Los vídeos se previsualizan y recortan sin re-codificar. Los pares Live Ph
 **¿HEIC en Windows?**  
 Organizar funciona. La preview puede mostrar solo metadata en algunos casos.
 
-**¿FFmpeg para recortar?**  
-Necesario solo para recortar. `brew install ffmpeg` en macOS. Renombrar y organizar funcionan sin él.
+**¿FFmpeg para recortar y optimizar en lote?**  
+Los instaladores lo incluyen, así que no hay que instalar nada. La copia
+empaquetada tiene prioridad sobre cualquier FFmpeg que tengas en el PATH,
+porque es la versión con la que se ha probado la app.
+
+La excepción es ejecutar desde el código: instálalo tú
+(`brew install ffmpeg`, `winget install Gyan.FFmpeg`, `apt install ffmpeg`) o
+lanza `pnpm fetch-ffmpeg` una vez para dejar los mismos binarios en
+`src-tauri/binaries`.
+
+FFmpeg es GPL y sigue siendo un programa aparte, invocado como subproceso; esta
+app sigue siendo MIT. El archivo `FFMPEG-LICENSE.txt` viaja con el instalador.
 
 ---
 

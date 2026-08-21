@@ -19,3 +19,7 @@ src-tauri/logs/
 # Personal launch notes — keep locally, not in the repo
 docs/REDDIT_POSTS.md
 docs/DEV.md
+
+# Downloaded by scripts/fetch-ffmpeg.mjs; never committed (~200 MB)
+src-tauri/binaries/
+src-tauri/.ffmpeg-download/

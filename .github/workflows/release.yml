@@ -38,6 +38,9 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Fetch FFmpeg for bundling
+        run: pnpm fetch-ffmpeg
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -57,6 +60,9 @@ jobs:
 
             **SmartScreen:** click *More info* → *Run anyway* if needed.
 
-            ### Requirements
-            - **Video trim and batch optimize:** FFmpeg (`brew install ffmpeg` on macOS, `winget install Gyan.FFmpeg` on Windows)
-          args: ${{ matrix.args }}
+            ### FFmpeg
+            FFmpeg ships inside the installer, so trimming and batch optimizing
+            work out of the box. An FFmpeg already on your PATH is ignored in
+            favour of the bundled one. FFmpeg is GPL-licensed and remains a
+            separate program; see FFMPEG-LICENSE.txt next to the app.
+          args: ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json

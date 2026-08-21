@@ -11,6 +11,8 @@
     "dev": "tauri dev",
     "dev:web": "vite dev",
     "build": "tauri build",
+    "build:bundled": "node scripts/fetch-ffmpeg.mjs && tauri build --config src-tauri/tauri.bundled-ffmpeg.conf.json",
+    "fetch-ffmpeg": "node scripts/fetch-ffmpeg.mjs",
     "build:web": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",

@@ -98,8 +98,17 @@ Yes. Videos preview in-app and can be trimmed losslessly. Live Photo pairs stay 
 **HEIC on Windows?**  
 Organizing works. Preview may fall back to metadata on some setups.
 
-**FFmpeg for video trim?**  
-Required for trimming. Install with `brew install ffmpeg` (macOS) or from [ffmpeg.org](https://ffmpeg.org/). Renaming and organizing work without it.
+**FFmpeg for video trim and batch optimize?**  
+The installers ship FFmpeg, so there is nothing to install. A bundled copy is
+preferred over any FFmpeg already on your PATH, since it is the build the app
+was tested against.
+
+Running from source is the exception: install FFmpeg yourself
+(`brew install ffmpeg`, `winget install Gyan.FFmpeg`, `apt install ffmpeg`), or
+run `pnpm fetch-ffmpeg` once to drop the same binaries into `src-tauri/binaries`.
+
+FFmpeg is GPL-licensed and stays a separate program, invoked as a subprocess;
+this app remains MIT. `FFMPEG-LICENSE.txt` travels with the installer.
 
 ---
 

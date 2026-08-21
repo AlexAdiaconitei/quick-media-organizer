@@ -343,7 +343,18 @@ pub(crate) fn find_binary(name: &str) -> Result<PathBuf, String> {
 /// installers add their folder to the *user* PATH in the registry, which
 /// running processes never pick up until they are restarted.
 fn binary_candidates(name: &str) -> Vec<PathBuf> {
-    let mut candidates = vec![PathBuf::from(name)];
+    let mut candidates = Vec::new();
+
+    // A bundled copy sits next to the executable (Tauri's externalBin), and it
+    // wins over whatever the machine happens to have installed: it is the
+    // build we tested against.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join(bundled_binary_name(name)));
+        }
+    }
+
+    candidates.push(PathBuf::from(name));
 
     if cfg!(target_os = "macos") {
         candidates.push(PathBuf::from(format!("/opt/homebrew/bin/{name}")));
@@ -383,6 +394,14 @@ fn binary_candidates(name: &str) -> Vec<PathBuf> {
     }
 
     candidates
+}
+
+fn bundled_binary_name(name: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
 }
 
 /// Every `…/WinGet/Packages/<pkg>/<build>/bin/<name>.exe` that exists.
@@ -517,4 +536,33 @@ fn preview_cache_key(path: &Path) -> String {
         }
     }
     format!("{:016x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bundled_binary_wins_over_the_system_one() {
+        let candidates = binary_candidates("ffmpeg");
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+            .expect("the test binary has a parent directory");
+
+        assert_eq!(
+            candidates[0].parent(),
+            Some(exe_dir.as_path()),
+            "the copy shipped in the installer must be probed first"
+        );
+        assert_eq!(candidates[1], PathBuf::from("ffmpeg"), "then whatever is on PATH");
+    }
+
+    #[test]
+    fn progress_lines_are_parsed_against_the_duration() {
+        assert_eq!(parse_progress_line("out_time_us=5000000", Some(10.0)), Some(0.5));
+        assert_eq!(parse_progress_line("out_time_us=20000000", Some(10.0)), Some(1.0));
+        assert_eq!(parse_progress_line("frame=12", Some(10.0)), None);
+        assert_eq!(parse_progress_line("out_time_us=5000000", None), None);
+    }
 }
