@@ -48,6 +48,14 @@ If it saves you time, I'd genuinely appreciate a [coffee ☕](https://buymeacoff
   <img src="docs/screenshots/workspace-video.png" alt="Video workspace with lossless trim controls" width="660" />
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/batch-select.png" alt="Batch panel with a folder of clips and photos selected" width="660" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/batch-done.png" alt="Finished batch job showing the space saved per file" width="660" />
+</p>
+
 ---
 
 ## Download

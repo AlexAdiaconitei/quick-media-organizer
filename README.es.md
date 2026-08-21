@@ -48,6 +48,14 @@ Si te ahorra tiempo, te agradecería de corazón un [café ☕](https://buymeaco
   <img src="docs/screenshots/workspace-video.png" alt="Interfaz con vídeo y recorte sin pérdida" width="660" />
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/batch-select.png" alt="Panel de lote con una carpeta de clips y fotos seleccionada" width="660" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/batch-done.png" alt="Lote terminado con el espacio ahorrado por archivo" width="660" />
+</p>
+
 ---
 
 ## Descarga

@@ -44,6 +44,8 @@
     initialItems = null,
     initialSettings = null,
     autoStart = false,
+    demoJob = null,
+    demoMode = false,
     onClose,
     onSessionChanged,
     onError,
@@ -57,6 +59,10 @@
     initialSettings?: BatchSettings | null;
     /// Starts the job as soon as the panel opens ("Optimize now").
     autoStart?: boolean;
+    /// Screenshot mode: a canned job, so the progress view can be captured
+    /// without encoding anything.
+    demoJob?: BatchJobStatus | null;
+    demoMode?: boolean;
     onClose: () => void;
     onSessionChanged: (state: FrontendState) => void;
     onError: (message: string) => void;
@@ -143,6 +149,18 @@
   });
 
   async function openPanel() {
+    if (demoMode) {
+      if (initialItems) {
+        items = dedupeItems(initialItems);
+        selected = new Set(items.map((item) => item.id));
+      }
+      if (demoJob) {
+        job = demoJob;
+        step = "run";
+      }
+      return;
+    }
+
     if (!loaded) {
       loaded = true;
       await initialize();
@@ -444,7 +462,7 @@
               label={t(locale, "batch.select.includeSubfolders")}
             />
           </div>
-          <BatchSelectGrid {locale} {items} bind:selected {busy} />
+          <BatchSelectGrid {locale} {items} bind:selected {busy} {demoMode} />
         {:else if step === "settings"}
           <BatchSettingsForm
             {locale}

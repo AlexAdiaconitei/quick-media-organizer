@@ -2,8 +2,11 @@
  * Captures README screenshots from the real Svelte UI (demo mode).
  *
  * Usage:
- *   npm run dev          (terminal 1)
- *   npm run capture-screenshots
+ *   pnpm capture-screenshots
+ *
+ * Starts the web dev server itself when one is not already listening. Every
+ * screen is fed canned data by src/lib/screenshotDemo.ts, so the images are
+ * reproducible and contain no real files.
  */
 import { mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -15,8 +18,10 @@ const OUT_DIR = join(ROOT, "docs", "screenshots");
 const BASE = "http://localhost:1420";
 
 const WELCOME_VIEWPORT = { width: 880, height: 660 };
-/** 4:3 — enough width for preview + right sidebar without clipping */
-const WORKSPACE_VIEWPORT = { width: 1320, height: 990 };
+/** Tall enough for the sidebar's tabs, metadata and shortcut bar */
+const WORKSPACE_VIEWPORT = { width: 1320, height: 1120 };
+/** The video sidebar also carries the trim panel and its notes */
+const VIDEO_VIEWPORT = { width: 1320, height: 1440 };
 
 async function waitForServer(maxMs = 45000) {
   const start = Date.now();
@@ -29,11 +34,13 @@ async function waitForServer(maxMs = 45000) {
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error("Dev server not running — start it with: npm run dev");
+  throw new Error("Dev server not running — start it with: pnpm dev:web");
 }
 
 function startDevServer() {
-  const child = spawn("npm", ["run", "dev"], {
+  // dev:web, not dev: the latter launches the native window.
+  const child = spawn("pnpm", ["dev:web"], {
+    shell: process.platform === "win32",
     cwd: ROOT,
     stdio: "ignore",
     detached: true,
@@ -43,7 +50,9 @@ function startDevServer() {
 }
 
 async function captureWorkspace(page, mode, filename) {
-  await page.setViewportSize(WORKSPACE_VIEWPORT);
+  await page.setViewportSize(
+    mode === "workspace-video" ? VIDEO_VIEWPORT : WORKSPACE_VIEWPORT,
+  );
   await page.goto(`${BASE}/?screenshot=${mode}`, { waitUntil: "networkidle" });
   await page.waitForSelector(`[data-screenshot-ready='${mode}']`, { timeout: 15000 });
 
@@ -62,6 +71,22 @@ async function captureWorkspace(page, mode, filename) {
   await page.locator(".app-shell").screenshot({
     path: join(OUT_DIR, filename),
   });
+}
+
+/** The batch panel is a modal: capture the dialog, not the dimmed page. */
+async function captureBatch(page, mode, filename) {
+  await page.setViewportSize(WORKSPACE_VIEWPORT);
+  await page.goto(`${BASE}/?screenshot=${mode}`, { waitUntil: "networkidle" });
+  await page.waitForSelector(".batch-card", { timeout: 15000 });
+  if (mode === "batch-select") {
+    await page.waitForSelector(".batch-tile", { timeout: 15000 });
+  } else if (mode === "batch-done") {
+    await page.waitForSelector(".batch-summary-savings", { timeout: 15000 });
+  } else {
+    await page.waitForSelector(".batch-item-list", { timeout: 15000 });
+  }
+  await page.waitForTimeout(500);
+  await page.locator(".batch-card").screenshot({ path: join(OUT_DIR, filename) });
 }
 
 async function main() {
@@ -88,6 +113,9 @@ async function main() {
 
   await captureWorkspace(page, "workspace", "workspace.png");
   await captureWorkspace(page, "workspace-video", "workspace-video.png");
+  await captureBatch(page, "batch-select", "batch-select.png");
+  await captureBatch(page, "batch-progress", "batch-progress.png");
+  await captureBatch(page, "batch-done", "batch-done.png");
 
   await browser.close();
   console.log("Screenshots saved to docs/screenshots/");

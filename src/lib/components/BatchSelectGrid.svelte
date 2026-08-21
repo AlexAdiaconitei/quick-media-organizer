@@ -9,11 +9,13 @@
     items,
     selected = $bindable<Set<string>>(new Set()),
     busy = false,
+    demoMode = false,
   }: {
     locale: Locale;
     items: MediaItem[];
     selected?: Set<string>;
     busy?: boolean;
+    demoMode?: boolean;
   } = $props();
 
   let lastToggled = $state<number | null>(null);
@@ -67,7 +69,7 @@
 
   function thumbnail(item: MediaItem): string | null {
     if (item.is_video) return null;
-    return convertFileSrc(item.paths[0]);
+    return demoMode ? item.paths[0] : convertFileSrc(item.paths[0]);
   }
 </script>
 

@@ -2063,3 +2063,13 @@ input[type="range"]:disabled {
   gap: 0.35rem;
   margin-bottom: 0.5rem;
 }
+
+/* The run view sits right under the panel subtitle, and the file rows read
+   better narrow than stretched across the whole dialog. */
+.batch-progress {
+  margin-top: 0.5rem;
+}
+
+.batch-item-list {
+  max-width: 860px;
+}

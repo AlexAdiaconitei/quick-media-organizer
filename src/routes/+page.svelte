@@ -23,6 +23,8 @@
   import { defaultBatchSettings, matchingPreset, builtInPresets } from "$lib/batch";
   import { detectLocale, format, t, type Locale } from "$lib/i18n";
   import {
+    buildScreenshotBatchItems,
+    buildScreenshotBatchJob,
     buildScreenshotVideoWorkspaceState,
     buildScreenshotWorkspaceState,
     getScreenshotMode,
@@ -39,6 +41,7 @@
   import type {
     ActionResult,
     AppSettings,
+    BatchJobStatus,
     BatchSettings,
     FrontendState,
     LayoutMode,
@@ -59,6 +62,7 @@
   let showBatch = $state(false);
   let batchInitialItems = $state<MediaItem[] | null>(null);
   let batchAutoStart = $state(false);
+  let batchDemoJob = $state<BatchJobStatus | null>(null);
   let panelTab = $state<"rename" | "optimize">("rename");
   let trimNotice = $state("");
   let availableUpdate = $state<AvailableUpdate | null>(null);
@@ -184,6 +188,15 @@
     showWelcome = false;
     showMetadata = true;
     layoutMode = "sidebar";
+
+    if (mode === "batch-select" || mode === "batch-progress" || mode === "batch-done") {
+      appState = buildScreenshotWorkspaceState();
+      batchInitialItems = buildScreenshotBatchItems();
+      batchDemoJob =
+        mode === "batch-select" ? null : buildScreenshotBatchJob(mode === "batch-done");
+      showBatch = true;
+      return;
+    }
 
     if (mode === "workspace-video") {
       renameValue = "Day at the park";
@@ -1093,8 +1106,10 @@
   open={showBatch}
   hasQueue={batchQueueAvailable}
   initialItems={batchInitialItems}
-  initialSettings={batchInitialItems ? quickSettings : null}
+  initialSettings={batchInitialItems && !screenshotMode ? quickSettings : null}
   autoStart={batchAutoStart}
+  demoJob={batchDemoJob}
+  demoMode={!!screenshotMode}
   onClose={() => {
     showBatch = false;
     batchInitialItems = null;

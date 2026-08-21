@@ -6,5 +6,10 @@ export function formatBytes(bytes: number): string {
 
 export function formatDate(value?: string | null): string {
   if (!value) return "—";
-  return value.replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3");
+  return value
+    // EXIF dates come as 2024:08:12 19:42:00
+    .replace(/^(\d{4}):(\d{2}):(\d{2})/, "$1-$2-$3")
+    // ISO timestamps read better without the T and the seconds
+    .replace("T", " ")
+    .replace(/(\d{2}:\d{2}):\d{2}(\.\d+)?Z?$/, "$1");
 }
