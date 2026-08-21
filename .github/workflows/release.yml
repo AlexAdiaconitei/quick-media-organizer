@@ -15,8 +15,10 @@ jobs:
         include:
           - platform: macos-latest
             args: --target aarch64-apple-darwin
+            target_dir: aarch64-apple-darwin
           - platform: windows-latest
             args: ""
+            target_dir: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -50,6 +52,20 @@ jobs:
           releaseBody: |
             Keyboard-first desktop app to rename, sort, trim and clean up phone photo & video backups.
 
+            ## Which download?
+
+            **Standard** — FFmpeg included. Trimming and batch optimizing work
+            straight after install, nothing else to set up.
+
+            **Lite** (`-lite` in the file name) — same app, ~50 MB smaller,
+            without FFmpeg. Renaming and organizing work as they are; trimming
+            and batch optimizing need FFmpeg on your PATH:
+
+            - Windows: `winget install Gyan.FFmpeg`
+            - macOS: `brew install ffmpeg`
+
+            Install it, reopen the app, and the trim and batch panels light up.
+
             ### macOS (Apple Silicon)
             Download the `.dmg`, open it, drag the app to Applications.
 
@@ -60,9 +76,40 @@ jobs:
 
             **SmartScreen:** click *More info* → *Run anyway* if needed.
 
-            ### FFmpeg
-            FFmpeg ships inside the installer, so trimming and batch optimizing
-            work out of the box. An FFmpeg already on your PATH is ignored in
-            favour of the bundled one. FFmpeg is GPL-licensed and remains a
-            separate program; see FFMPEG-LICENSE.txt next to the app.
+            ### FFmpeg licensing
+            The bundled FFmpeg is GPL-licensed and stays a separate program,
+            invoked as a subprocess; the app itself is MIT. See
+            FFMPEG-LICENSE.txt next to the installed app.
           args: ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json
+
+      # The Rust binary is already built, so this only repeats the bundling
+      # step, without the FFmpeg payload.
+      - name: Build the lite installer
+        run: pnpm tauri build ${{ matrix.args }}
+
+      - name: Upload the lite installer
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          bundle_dir="src-tauri/target/release/bundle"
+          if [ -n "${{ matrix.target_dir }}" ]; then
+            bundle_dir="src-tauri/target/${{ matrix.target_dir }}/release/bundle"
+          fi
+
+          shopt -s nullglob
+          uploads=()
+          for file in "$bundle_dir"/*/*.dmg "$bundle_dir"/*/*.msi "$bundle_dir"/*/*.exe; do
+            extension="${file##*.}"
+            renamed="${file%.*}-lite.${extension}"
+            mv "$file" "$renamed"
+            uploads+=("$renamed")
+          done
+
+          if [ ${#uploads[@]} -eq 0 ]; then
+            echo "No lite bundles were produced in $bundle_dir" >&2
+            exit 1
+          fi
+
+          gh release upload "${{ github.ref_name }}" "${uploads[@]}" --clobber

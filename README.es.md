@@ -98,18 +98,26 @@ Sí. Los vídeos se previsualizan y recortan sin re-codificar. Los pares Live Ph
 **¿HEIC en Windows?**  
 Organizar funciona. La preview puede mostrar solo metadata en algunos casos.
 
-**¿FFmpeg para recortar y optimizar en lote?**  
-Los instaladores lo incluyen, así que no hay que instalar nada. La copia
-empaquetada tiene prioridad sobre cualquier FFmpeg que tengas en el PATH,
-porque es la versión con la que se ha probado la app.
+**¿Descargo la Standard o la Lite?**  
+Cada release publica las dos:
 
-La excepción es ejecutar desde el código: instálalo tú
-(`brew install ffmpeg`, `winget install Gyan.FFmpeg`, `apt install ffmpeg`) o
-lanza `pnpm fetch-ffmpeg` una vez para dejar los mismos binarios en
-`src-tauri/binaries`.
+| | Tamaño (instalador Windows) | FFmpeg |
+|---|---|---|
+| Standard | ~57 MB | incluido, no hay que instalar nada |
+| Lite (`-lite`) | ~5 MB | lo instalas tú |
+
+Renombrar y organizar funcionan en ambas. Recortar y optimizar en lote
+necesitan FFmpeg: en la Lite instálalo una vez con
+`winget install Gyan.FFmpeg` (Windows), `brew install ffmpeg` (macOS) o
+`apt install ffmpeg` (Linux) y vuelve a abrir la app. La copia empaquetada
+tiene prioridad sobre la del PATH, porque es la versión con la que se ha
+probado.
+
+Para compilar en local: `pnpm build` genera la Lite y `pnpm build:full`
+descarga FFmpeg y genera la Standard.
 
 FFmpeg es GPL y sigue siendo un programa aparte, invocado como subproceso; esta
-app sigue siendo MIT. El archivo `FFMPEG-LICENSE.txt` viaja con el instalador.
+app sigue siendo MIT. El archivo `FFMPEG-LICENSE.txt` viaja con la Standard.
 
 ---
 
