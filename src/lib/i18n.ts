@@ -154,6 +154,8 @@ const messages = {
       keyframeNote: "Stream copy keeps 100% quality. Cuts may snap to the nearest keyframe (typical on phone videos).",
       replacesOriginal:
         "Trimming rewrites the video file in place. A copy of the original is kept in {folder} and {key} restores it.",
+      applied:
+        "Trimmed. The player is showing the trimmed file now ({size}). The original is in trim-backups — {key} to undo.",
     },
     batch: {
       title: "Batch optimize",
@@ -441,6 +443,8 @@ const messages = {
       keyframeNote: "La copia de stream mantiene el 100% de calidad. El corte puede ajustarse al fotograma clave más cercano.",
       replacesOriginal:
         "Recortar reescribe el archivo de vídeo en su sitio. Se guarda una copia del original en {folder} y {key} la restaura.",
+      applied:
+        "Recortado. El reproductor ya muestra el archivo recortado ({size}). El original está en trim-backups — {key} para deshacer.",
     },
     batch: {
       title: "Optimizar en lote",

@@ -4,6 +4,7 @@
 //! but not that the argument strings are accepted by ffmpeg. These do, and
 //! they skip themselves when ffmpeg is not installed so CI stays green.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -57,6 +58,8 @@ fn make_video(path: &Path) {
             "libx264",
             "-crf",
             "18",
+            "-g",
+            "15",
             "-pix_fmt",
             "yuv420p",
             "-c:a",
@@ -279,4 +282,61 @@ fn capabilities_report_this_build() {
     assert!(capabilities.version.is_some());
     // Every mainstream build ships x264; if this fails the parsing is broken.
     assert!(capabilities.h264);
+}
+
+/// The whole trim path against real ffmpeg: the file the app keeps showing
+/// must be the trimmed one, the original must survive in the backup folder,
+/// and undo must put it back.
+#[test]
+fn trimming_replaces_the_file_and_undo_restores_it() {
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg not installed");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let clip = dir.path().join("clip.mp4");
+    make_video(&clip);
+
+    let encoder = FfmpegEncoder::locate().unwrap();
+    let before = encoder.probe_duration(&clip).unwrap();
+    let bytes_before = fs::metadata(&clip).unwrap().len();
+
+    let mut state = crate::state::AppState::new(dir.path().join("appdata"));
+    state.open_folder(dir.path().to_path_buf()).unwrap();
+
+    let result = state.trim_current_video(0.5, 1.5).unwrap();
+    assert!(result.success, "{}", result.message);
+
+    let after = encoder
+        .probe_duration(&clip)
+        .expect("the trimmed file is still a readable video");
+    assert!(
+        after < before - 0.4,
+        "expected a shorter clip, got {after} from {before}"
+    );
+
+    // The queue keeps pointing at the same path, with the new size.
+    let item = result.state.item.expect("an item stays selected");
+    assert_eq!(item.paths[0], clip.to_string_lossy());
+    assert_eq!(item.size_bytes, fs::metadata(&clip).unwrap().len());
+    assert_ne!(item.size_bytes, bytes_before, "the preview key must change");
+
+    let backups: Vec<_> = fs::read_dir(
+        dir.path()
+            .join(crate::path_util::APP_FOLDER_NAME)
+            .join("trim-backups"),
+    )
+    .unwrap()
+    .filter_map(Result::ok)
+    .collect();
+    assert_eq!(backups.len(), 1, "the original is kept once");
+
+    let undone = state.undo_last().unwrap();
+    assert!(undone.success, "{}", undone.message);
+    let restored = encoder.probe_duration(&clip).unwrap();
+    assert!(
+        (restored - before).abs() < 0.3,
+        "undo should restore the full clip, got {restored} from {before}"
+    );
 }

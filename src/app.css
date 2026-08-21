@@ -1997,3 +1997,14 @@ input[type="range"]:disabled {
   flex: none;
   gap: 0.5rem;
 }
+
+.trim-applied {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}

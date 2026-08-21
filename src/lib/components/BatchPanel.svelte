@@ -461,7 +461,13 @@
             onRequestReplaceMode={() => (showReplaceConfirm = true)}
           />
         {:else if job}
-          <BatchProgress {locale} {job} {cancelling} onCancel={() => void cancel()} />
+          <BatchProgress
+            {locale}
+            {job}
+            {cancelling}
+            onCancel={() => void cancel()}
+            {onError}
+          />
         {/if}
       </div>
 

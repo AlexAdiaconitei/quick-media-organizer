@@ -1,7 +1,7 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import { invokeLogged } from "../errorReporter";
+  import { invokeLogged, reportError } from "../errorReporter";
   import { t, type Locale } from "../i18n";
   import type { MediaFileDiagnosis, MediaItem, VideoPreviewInfo } from "../types";
 
@@ -11,12 +11,14 @@
     videoRef = $bindable<HTMLVideoElement | null>(null),
     demoMode = false,
     videoWithSound = false,
+    onError = () => {},
   }: {
     locale: Locale;
     item: MediaItem | null | undefined;
     videoRef?: HTMLVideoElement | null;
     demoMode?: boolean;
     videoWithSound?: boolean;
+    onError?: (message: string) => void;
   } = $props();
 
   const VIDEO_VOLUME = 1;
@@ -37,9 +39,14 @@
     applyVideoAudio(videoRef);
   });
 
+  const mediaKey = $derived(`${item?.paths[0] ?? ""}|${item?.size_bytes ?? 0}`);
+
   $effect(() => {
     const path = item?.paths[0];
     const isVideo = item?.is_video;
+    // Re-resolve whenever the bytes on disk change, otherwise a trimmed video
+    // keeps playing the stale proxy built before the cut.
+    void mediaKey;
 
     playbackFailed = false;
     previewInfo = null;
@@ -81,12 +88,12 @@
     demoMode && previewPath
       ? previewPath
       : playbackPath
-        ? `${convertFileSrc(playbackPath)}?v=${encodeURIComponent(item?.id ?? playbackPath)}`
+        ? `${convertFileSrc(playbackPath)}?v=${encodeURIComponent(mediaKey)}`
         : "",
   );
   const posterUrl = $derived(
     previewInfo?.poster_path
-      ? `${convertFileSrc(previewInfo.poster_path)}?v=${encodeURIComponent(item?.id ?? previewInfo.poster_path)}`
+      ? `${convertFileSrc(previewInfo.poster_path)}?v=${encodeURIComponent(mediaKey)}`
       : "",
   );
 
@@ -95,7 +102,9 @@
     try {
       await openPath(previewPath);
     } catch (error) {
-      console.error(error);
+      // Silently swallowing this is what made the button look dead.
+      onError(String(error));
+      void reportError(String(error), { action: "open_in_default_app", path: previewPath });
     }
   }
 
@@ -134,7 +143,7 @@
 
 <div class="preview-panel">
   {#if item}
-    {#key item.id}
+    {#key mediaKey}
       {#if item.kind === "live_photo"}
         <span class="live-badge">{t(locale, "livePhoto")}</span>
       {/if}

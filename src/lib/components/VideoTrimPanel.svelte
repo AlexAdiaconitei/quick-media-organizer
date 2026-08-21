@@ -7,6 +7,7 @@
     videoRef = $bindable<HTMLVideoElement | null>(null),
     pendingTrim = $bindable(false),
     ffmpegAvailable = true,
+    notice = "",
     disabled = false,
     screenshotDemo = false,
     onApply,
@@ -15,6 +16,8 @@
     videoRef?: HTMLVideoElement | null;
     pendingTrim?: boolean;
     ffmpegAvailable?: boolean;
+    /// Shown after a trim so it is obvious the file on screen is the new one.
+    notice?: string;
     disabled?: boolean;
     screenshotDemo?: boolean;
     onApply: (trimStart: number, trimEnd: number) => void;
@@ -168,6 +171,10 @@
     <strong>{t(locale, "trim.title")}</strong>
     <span class="lossless-badge">{t(locale, "trim.lossless")}</span>
   </div>
+
+  {#if notice}
+    <p class="trim-applied">{notice}</p>
+  {/if}
 
   {#if !ffmpegAvailable}
     <p class="trim-warning">

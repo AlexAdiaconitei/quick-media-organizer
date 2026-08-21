@@ -28,6 +28,7 @@
     type ScreenshotMode,
   } from "$lib/screenshotDemo";
   import { modKey, modLabel, skipModLabel, isSkipShortcut } from "$lib/shortcuts";
+  import { formatBytes } from "$lib/utils";
   import type {
     ActionResult,
     AppSettings,
@@ -52,6 +53,7 @@
   let batchInitialItems = $state<MediaItem[] | null>(null);
   let batchAutoStart = $state(false);
   let panelTab = $state<"rename" | "optimize">("rename");
+  let trimNotice = $state("");
   /// Settings for the quick picker in the Optimize tab, handed to the batch
   /// panel when the user runs it or opens the advanced view.
   let quickSettings = $state<BatchSettings>(defaultBatchSettings());
@@ -406,12 +408,25 @@
       if (result.success) {
         if (videoRef) videoRef.load();
         trimPanel?.resetAfterApply();
+        showTrimNotice(result.state.item?.size_bytes ?? 0);
       }
     });
   }
 
+  function showTrimNotice(sizeBytes: number) {
+    const message = format(locale, "trim.applied", {
+      size: formatBytes(sizeBytes),
+      key: modLabel("Z"),
+    });
+    trimNotice = message;
+    setTimeout(() => {
+      if (trimNotice === message) trimNotice = "";
+    }, 12000);
+  }
+
   async function skip(delta: number) {
     if (actionInFlight) return;
+    trimNotice = "";
     try {
       appState = await invokeLogged<FrontendState>("skip_current", { delta });
       if (appState.session_complete) {
@@ -866,7 +881,14 @@
   {:else}
     <section class="workspace">
       <div class="preview-column">
-        <PhotoViewer {locale} item={appState.item} bind:videoRef demoMode={!!screenshotMode} {videoWithSound} />
+        <PhotoViewer
+          {locale}
+          item={appState.item}
+          bind:videoRef
+          demoMode={!!screenshotMode}
+          {videoWithSound}
+          onError={(message) => showToast(message, true, 8000)}
+        />
       </div>
       <aside class="side-panel">
         <div class="control-panel">
@@ -913,6 +935,7 @@
                 {ffmpegAvailable}
                 disabled={actionInFlight}
                 screenshotDemo={screenshotMode === "workspace-video"}
+                notice={trimNotice}
                 onApply={(start, end) => void applyVideoTrim(start, end)}
               />
             {/if}

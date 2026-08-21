@@ -9,12 +9,23 @@
     job,
     cancelling = false,
     onCancel,
+    onError = () => {},
   }: {
     locale: Locale;
     job: BatchJobStatus;
     cancelling?: boolean;
     onCancel: () => void;
+    onError?: (message: string) => void;
   } = $props();
+
+  async function openOutputFolder() {
+    if (!job.output_dir) return;
+    try {
+      await openPath(job.output_dir);
+    } catch (error) {
+      onError(String(error));
+    }
+  }
 
   const finished = $derived(job.total - job.items.filter(isPending).length);
   const percent = $derived(job.total === 0 ? 0 : (finished / job.total) * 100);
@@ -72,7 +83,7 @@
         <button
           type="button"
           class="ghost-btn"
-          onclick={() => job.output_dir && void openPath(job.output_dir)}
+          onclick={() => void openOutputFolder()}
         >
           {t(locale, "batch.run.openOutput")}
         </button>
