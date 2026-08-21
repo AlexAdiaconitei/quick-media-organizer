@@ -20,7 +20,7 @@ use super::{
     BatchReplacement, BatchSettings, OutputMode,
 };
 use crate::fs_util::{apply_timestamps, read_timestamps};
-use crate::path_util::APP_FOLDER_NAME;
+use crate::path_util::{is_path_inside_root, APP_FOLDER_NAME};
 use crate::video::{FfmpegTools, CANCELLED};
 
 const PROGRESS_EVENT_INTERVAL: Duration = Duration::from_millis(250);
@@ -286,7 +286,7 @@ fn build_plan(
             };
 
             // Never re-compress what a previous run already produced.
-            if is_inside(source, &dest_dir) {
+            if is_path_inside_root(&dest_dir, source) {
                 return Ok(PlanOutcome::Skip(
                     "Already in the output folder — skipped so it is not re-compressed.".into(),
                 ));
@@ -325,15 +325,6 @@ fn build_plan(
         replace_original,
         backup,
     })))
-}
-
-/// True when `path` lives in `dir` (or below it). Falls back to a plain prefix
-/// check for paths that cannot be canonicalized yet.
-pub fn is_inside(path: &Path, dir: &Path) -> bool {
-    match (path.canonicalize(), dir.canonicalize()) {
-        (Ok(path), Ok(dir)) => path.starts_with(dir),
-        _ => path.starts_with(dir),
-    }
 }
 
 fn sanitize_folder_name(name: &str) -> String {

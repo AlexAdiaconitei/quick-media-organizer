@@ -44,14 +44,19 @@
 <svelte:window onkeydown={open ? handleKeydown : undefined} />
 
 {#if open}
-  <div class="modal-backdrop danger-backdrop" role="presentation" onclick={onCancel}>
+  <div class="modal-backdrop danger-backdrop">
+    <button
+      type="button"
+      class="modal-scrim"
+      aria-label={t(locale, "common.close")}
+      onclick={onCancel}
+    ></button>
     <div
       class="modal-card replace-confirm-card"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="replace-confirm-title"
       tabindex="-1"
-      onclick={(event) => event.stopPropagation()}
     >
       <h2 id="replace-confirm-title">{t(locale, "batch.replaceConfirm.title")}</h2>
       <p class="replace-summary">

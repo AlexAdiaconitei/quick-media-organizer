@@ -166,7 +166,6 @@
       aria-modal="true"
       aria-labelledby="folder-picker-title"
       tabindex="-1"
-      onclick={(event) => event.stopPropagation()}
     >
       <h2 id="folder-picker-title">{t(locale, "folderPicker.title")}</h2>
 

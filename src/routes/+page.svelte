@@ -31,6 +31,7 @@
     AppSettings,
     FrontendState,
     LayoutMode,
+    MediaItem,
     RenameMode,
     SortMode,
   } from "$lib/types";
@@ -45,6 +46,8 @@
   let showFolderPicker = $state(false);
   let showOptions = $state(false);
   let showBatch = $state(false);
+  let batchInitialItems = $state<MediaItem[] | null>(null);
+  let panelTab = $state<"rename" | "optimize">("rename");
   let showHelp = $state(false);
   let folderQuery = $state("");
   let folderSelection = $state<string | null>(null);
@@ -254,6 +257,17 @@
         8000,
       );
     }
+  }
+
+  function openBatchPanel() {
+    batchInitialItems = null;
+    showBatch = true;
+  }
+
+  /// "Optimize this file" seeds the batch panel with the current item only.
+  function openBatchForCurrentItem() {
+    batchInitialItems = appState.item ? [appState.item] : null;
+    showBatch = true;
   }
 
   function dismissResumeBanner() {
@@ -550,7 +564,7 @@
     }
 
     if (key === "b") {
-      showBatch = true;
+      openBatchPanel();
       flashKey(modLabel("B"));
       return true;
     }
@@ -595,7 +609,7 @@
       }
       if (mod === "b") {
         event.preventDefault();
-        showBatch = true;
+        openBatchPanel();
         return;
       }
       return;
@@ -673,11 +687,13 @@
     if (appState.item?.is_video && trimPanel) {
       if (event.key === "[") {
         event.preventDefault();
+        panelTab = "optimize";
         trimPanel.setStartToPlayhead();
         return;
       }
       if (event.key === "]") {
         event.preventDefault();
+        panelTab = "optimize";
         trimPanel.setEndToPlayhead();
         return;
       }
@@ -753,7 +769,7 @@
         <button class:active={locale === "es"} onclick={() => changeLocale("es")}>ES</button>
       </div>
       {#if !showWelcome}
-        <button class="ghost-btn" onclick={() => (showBatch = true)}>
+        <button class="ghost-btn" onclick={openBatchPanel}>
           {t(locale, "batch.open")}
         </button>
         <button class="ghost-btn" onclick={() => (showOptions = true)} disabled={chromeDisabled}>
@@ -812,7 +828,7 @@
           <button class="ghost-btn" onclick={openFolderDialog}>
             {t(locale, "openFolder")}
           </button>
-          <button class="ghost-btn" onclick={() => (showBatch = true)}>
+          <button class="ghost-btn" onclick={openBatchPanel}>
             {t(locale, "batch.open")}
           </button>
         </div>
@@ -824,7 +840,7 @@
         <h2>{t(locale, "noFolder")}</h2>
         <div class="modal-actions">
           <button class="primary-btn" onclick={openFolderDialog}>{t(locale, "openFolder")}</button>
-          <button class="ghost-btn" onclick={() => (showBatch = true)}>
+          <button class="ghost-btn" onclick={openBatchPanel}>
             {t(locale, "batch.open")}
           </button>
           <button class="ghost-btn" onclick={() => (showOptions = true)} disabled={chromeDisabled}>
@@ -840,26 +856,67 @@
       </div>
       <aside class="side-panel">
         <div class="control-panel">
-          <RenameInput
-            {locale}
-            bind:value={renameValue}
-            bind:inputRef={renameInput}
-            armedFolder={appState.armed_folder}
-            compact={sidebarLayout}
-            pendingTrim={pendingVideoTrim}
-          />
-          {#if appState.item?.is_video}
-            <VideoTrimPanel
-              bind:this={trimPanel}
+          <div class="panel-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={panelTab === "rename"}
+              class:active={panelTab === "rename"}
+              onclick={() => (panelTab = "rename")}
+            >
+              {t(locale, "sidePanel.tabRename")}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={panelTab === "optimize"}
+              class:active={panelTab === "optimize"}
+              onclick={() => (panelTab = "optimize")}
+            >
+              {t(locale, "sidePanel.tabOptimize")}
+              {#if pendingVideoTrim}
+                <span class="tab-dot" aria-hidden="true"></span>
+              {/if}
+            </button>
+          </div>
+
+          <div class="panel-tab-body" class:hidden={panelTab !== "rename"}>
+            <RenameInput
               {locale}
-              bind:videoRef
-              bind:pendingTrim={pendingVideoTrim}
-              {ffmpegAvailable}
-              disabled={actionInFlight}
-              screenshotDemo={screenshotMode === "workspace-video"}
-              onApply={(start, end) => void applyVideoTrim(start, end)}
+              bind:value={renameValue}
+              bind:inputRef={renameInput}
+              armedFolder={appState.armed_folder}
+              compact={sidebarLayout}
+              pendingTrim={pendingVideoTrim}
             />
-          {/if}
+          </div>
+
+          <div class="panel-tab-body" class:hidden={panelTab !== "optimize"}>
+            {#if appState.item?.is_video}
+              <VideoTrimPanel
+                bind:this={trimPanel}
+                {locale}
+                bind:videoRef
+                bind:pendingTrim={pendingVideoTrim}
+                {ffmpegAvailable}
+                disabled={actionInFlight}
+                screenshotDemo={screenshotMode === "workspace-video"}
+                onApply={(start, end) => void applyVideoTrim(start, end)}
+              />
+            {/if}
+            <div class="optimize-file">
+              <button
+                type="button"
+                class="ghost-btn"
+                disabled={!appState.item}
+                onclick={openBatchForCurrentItem}
+              >
+                {t(locale, "sidePanel.optimizeFile")}
+              </button>
+              <small class="option-hint">{t(locale, "sidePanel.optimizeFileHint")}</small>
+            </div>
+          </div>
+
           <MetadataPanel
             {locale}
             item={appState.item}
@@ -952,8 +1009,10 @@
   {locale}
   open={showBatch}
   hasQueue={batchQueueAvailable}
+  initialItems={batchInitialItems}
   onClose={() => {
     showBatch = false;
+    batchInitialItems = null;
     focusRenameInput();
   }}
   onSessionChanged={(state) => {

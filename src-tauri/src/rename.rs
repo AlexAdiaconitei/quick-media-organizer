@@ -40,27 +40,6 @@ fn counter_key(dir: &Path, base: &str) -> String {
     format!("{}|{}", dir.to_string_lossy(), base)
 }
 
-pub fn resolve_unique_name(
-    dir: &Path,
-    base: &str,
-    ext: &str,
-    counter_map: &mut HashMap<String, u32>,
-) -> Option<String> {
-    let names = resolve_group_names(dir, base, &[ext.to_string()], RenameMode::Free, counter_map)?;
-    names.into_iter().next()
-}
-
-pub fn resolve_prefix_counter_name(
-    dir: &Path,
-    prefix: &str,
-    ext: &str,
-    counter_map: &mut HashMap<String, u32>,
-) -> Option<String> {
-    let names =
-        resolve_group_names(dir, prefix, &[ext.to_string()], RenameMode::PrefixCounter, counter_map)?;
-    names.into_iter().next()
-}
-
 pub fn resolve_group_names(
     dir: &Path,
     base: &str,

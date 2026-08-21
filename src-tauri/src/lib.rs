@@ -1,3 +1,8 @@
+// MSVC prints an informational line while creating the import library for the
+// cdylib. It is not a problem in this crate and only adds noise to every build.
+#![allow(unknown_lints)]
+#![allow(linker_messages)]
+
 mod batch;
 mod commands;
 mod error_log;

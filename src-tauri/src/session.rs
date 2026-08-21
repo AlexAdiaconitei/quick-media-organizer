@@ -1,4 +1,4 @@
-use crate::models::{AppSettings, SessionData, SessionStats, SortMode};
+use crate::models::{AppSettings, SessionData};
 use crate::path_util::{APP_FOLDER_NAME, LEGACY_APP_FOLDER_NAME};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,19 +44,3 @@ pub fn save_app_settings(app_data_dir: &Path, settings: &AppSettings) -> Result<
     fs::write(app_data_dir.join(SETTINGS_FILE), content).map_err(|e| e.to_string())
 }
 
-pub fn new_session(folder: &Path, sort_mode: SortMode, scan_recursive: bool) -> SessionData {
-    SessionData {
-        folder_path: folder.to_string_lossy().to_string(),
-        current_index: 0,
-        current_item_paths: Vec::new(),
-        sort_mode,
-        scan_recursive,
-        rename_mode: Default::default(),
-        counter_map: Default::default(),
-        recent_folders: Vec::new(),
-        armed_folder: None,
-        undo_stack: Vec::new(),
-        stats: SessionStats::default(),
-        processed_paths: Vec::new(),
-    }
-}

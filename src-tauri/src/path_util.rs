@@ -84,17 +84,6 @@ pub fn is_path_inside_root(root: &Path, path: &Path) -> bool {
     path_canon.starts_with(&root_canon)
 }
 
-pub fn rel_path_from_root(root: &Path, path: &Path) -> Option<String> {
-    path.strip_prefix(root)
-        .ok()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .filter(|s| !s.is_empty())
-}
-
-pub fn has_parent_traversal(path: &Path) -> bool {
-    path.components().any(|c| matches!(c, Component::ParentDir))
-}
-
 pub fn is_path_in_ignored_dir(root: &Path, path: &Path) -> bool {
     if let Ok(relative) = path.strip_prefix(root) {
         for component in relative.components() {

@@ -42,6 +42,14 @@ const messages = {
       cancel: "Cancel",
       close: "Close",
     },
+    sidePanel: {
+      tabRename: "Rename",
+      tabOptimize: "Optimize",
+      optimizeFile: "Optimize this file…",
+      optimizeFileHint:
+        "Opens the batch panel with only this file, and writes the converted copy wherever you choose. The original is untouched.",
+      trimHeading: "Trim",
+    },
     renamed: "Renamed",
     trashed: "Moved to _deleted",
     savedFolder: "Saved to folder",
@@ -143,6 +151,8 @@ const messages = {
       savedWithRename: "Trimmed and saved",
       hint: "Play the video, pause where you want to cut, then press {startKey} (front) or {endKey} (back).",
       keyframeNote: "Stream copy keeps 100% quality. Cuts may snap to the nearest keyframe (typical on phone videos).",
+      replacesOriginal:
+        "Trimming rewrites the video file in place. A copy of the original is kept in {folder} and {key} restores it.",
     },
     batch: {
       title: "Batch optimize",
@@ -224,7 +234,8 @@ const messages = {
         minSavings: "Minimum savings to keep the result (%)",
         concurrency: "Files at a time",
         preserveTimestamps: "Keep file dates",
-        presets: "Presets",
+        presets: "Profile",
+        presetCustom: "Custom",
         presetPlaceholder: "Preset name",
         presetSave: "Save current settings",
         presetDelete: "Delete",
@@ -316,6 +327,14 @@ const messages = {
       ok: "OK",
       cancel: "Cancelar",
       close: "Cerrar",
+    },
+    sidePanel: {
+      tabRename: "Renombrar",
+      tabOptimize: "Optimizar",
+      optimizeFile: "Optimizar este archivo…",
+      optimizeFileHint:
+        "Abre el panel de lote solo con este archivo y escribe la copia convertida donde elijas. El original no se toca.",
+      trimHeading: "Recortar",
     },
     renamed: "Renombrado",
     trashed: "Movido a _deleted",
@@ -418,6 +437,8 @@ const messages = {
       savedWithRename: "Recortado y guardado",
       hint: "Reproduce el vídeo, pausa donde quieras cortar y pulsa {startKey} (delante) o {endKey} (detrás).",
       keyframeNote: "La copia de stream mantiene el 100% de calidad. El corte puede ajustarse al fotograma clave más cercano.",
+      replacesOriginal:
+        "Recortar reescribe el archivo de vídeo en su sitio. Se guarda una copia del original en {folder} y {key} la restaura.",
     },
     batch: {
       title: "Optimizar en lote",
@@ -499,7 +520,8 @@ const messages = {
         minSavings: "Ahorro mínimo para quedarse con el resultado (%)",
         concurrency: "Archivos a la vez",
         preserveTimestamps: "Conservar las fechas del archivo",
-        presets: "Presets",
+        presets: "Perfil",
+        presetCustom: "Personalizado",
         presetPlaceholder: "Nombre del preset",
         presetSave: "Guardar estos ajustes",
         presetDelete: "Borrar",

@@ -1495,3 +1495,240 @@ button:disabled {
   opacity: 0.7;
   text-align: right;
 }
+
+/* Clickable backdrop as a real button: dismissing a dialog by pointer must
+   also be reachable from the keyboard. */
+.modal-scrim {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.modal-scrim:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -6px;
+}
+
+.modal-backdrop > .modal-card,
+.modal-backdrop > .options-card,
+.modal-backdrop > .picker-card {
+  position: relative;
+  z-index: 1;
+}
+
+/* --- Form controls ------------------------------------------------------
+   Native selects, number fields and sliders render as light Windows widgets
+   on a dark surface, so every control gets the app's own treatment. */
+
+select,
+textarea,
+input[type="text"],
+input[type="number"],
+input[type="search"] {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+select:hover,
+textarea:hover,
+input[type="text"]:hover,
+input[type="number"]:hover,
+input[type="search"]:hover {
+  background: var(--surface-hover);
+}
+
+select:focus-visible,
+textarea:focus-visible,
+input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="search"]:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+select {
+  appearance: none;
+  padding-right: 2rem;
+  /* Chevron drawn inline so no asset request is needed. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) calc(50% + 2px), calc(100% - 13px) calc(50% + 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+/* The popup list is drawn by the OS: keep it readable in dark mode. */
+select option {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: none;
+}
+
+input[type="range"]:not(.trim-handle) {
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]:not(.trim-handle)::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+input[type="range"]:not(.trim-handle)::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--accent);
+}
+
+input[type="range"]:not(.trim-handle):focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+input[type="range"]:disabled {
+  opacity: 0.4;
+}
+
+.checkbox-row {
+  cursor: pointer;
+}
+
+.checkbox-row span {
+  font-size: 0.85rem;
+}
+
+.checkbox-row .option-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* --- Side panel tabs ---------------------------------------------------- */
+
+.panel-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.panel-tabs button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0.4rem 0.75rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+}
+
+.panel-tabs button:hover {
+  color: var(--text);
+}
+
+.panel-tabs button.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* Marks a pending trim while the user is on the rename tab. */
+.tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.panel-tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.panel-tab-body.hidden {
+  display: none;
+}
+
+.optimize-file {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.trim-destructive-note {
+  color: var(--muted);
+}
+
+/* --- Batch: step navigation and active profile -------------------------- */
+
+.batch-steps button {
+  padding: 0.25rem 0.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.batch-steps button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.batch-steps button.active {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.batch-preset-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.batch-active-preset {
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.batch-preset-chip.active .ghost-btn {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}

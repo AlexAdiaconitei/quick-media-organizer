@@ -31,13 +31,18 @@
 </script>
 
 {#if open}
-  <div class="modal-backdrop" role="presentation" onclick={onClose}>
+  <div class="modal-backdrop">
+    <button
+      type="button"
+      class="modal-scrim"
+      aria-label={t(locale, "common.close")}
+      onclick={onClose}
+    ></button>
     <div
       class="options-card"
       role="dialog"
       aria-modal="true"
       tabindex="-1"
-      onclick={(event) => event.stopPropagation()}
     >
       <h2>{t(locale, "options.title")}</h2>
       <div class="options-grid">

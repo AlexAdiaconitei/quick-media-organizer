@@ -622,13 +622,6 @@ impl AppState {
         }
     }
 
-    fn unmark_item(&mut self, item: &MediaItem) {
-        self.processed_paths.remove(&item.id);
-        for path in &item.paths {
-            self.processed_paths.remove(path);
-        }
-    }
-
     fn is_item_processed(&self, item: &MediaItem) -> bool {
         self.processed_paths.contains(&item.id)
             || item.paths.iter().any(|path| self.processed_paths.contains(path))

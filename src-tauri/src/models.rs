@@ -63,18 +63,6 @@ pub struct MediaItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MediaMetadata {
-    pub file_name: String,
-    pub exif_date: Option<String>,
-    pub modified_at: Option<String>,
-    pub size_bytes: u64,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-    pub is_video: bool,
-    pub kind: MediaKind,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoPreviewInfo {
     pub playback_path: String,
     pub poster_path: Option<String>,

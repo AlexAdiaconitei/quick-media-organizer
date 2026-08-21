@@ -1,6 +1,6 @@
 <script lang="ts">
   import { format, t, type Locale } from "../i18n";
-  import { ffmpegInstallCommand } from "../shortcuts";
+  import { ffmpegInstallCommand, modLabel } from "../shortcuts";
 
   let {
     locale,
@@ -241,4 +241,10 @@
     <p class="trim-enter-note">{t(locale, "trim.enterSavesToo")}</p>
   {/if}
   <p class="trim-note">{t(locale, "trim.keyframeNote")}</p>
+  <p class="trim-note trim-destructive-note">
+    {format(locale, "trim.replacesOriginal", {
+      folder: ".quick-media-organizer/trim-backups/",
+      key: modLabel("Z"),
+    })}
+  </p>
 </div>

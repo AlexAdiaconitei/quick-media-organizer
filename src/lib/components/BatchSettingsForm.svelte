@@ -9,6 +9,7 @@
     hasVideos,
     hasImages,
     presets,
+    activePresetId,
     onSavePreset,
     onDeletePreset,
     onApplyPreset,
@@ -21,6 +22,8 @@
     hasVideos: boolean;
     hasImages: boolean;
     presets: BatchPreset[];
+    /// Preset the current values correspond to, or null when hand-tuned.
+    activePresetId: string | null;
     onSavePreset: (name: string) => void;
     onDeletePreset: (id: string) => void;
     onApplyPreset: (preset: BatchPreset) => void;
@@ -69,11 +72,25 @@
 <div class="batch-settings">
   {#if presets.length > 0}
     <div class="batch-presets">
-      <span class="field-label">{t(locale, "batch.settings.presets")}</span>
+      <div class="batch-preset-head">
+        <span class="field-label">{t(locale, "batch.settings.presets")}</span>
+        <span class="batch-active-preset">
+          {#if activePresetId}
+            {presets.find((preset) => preset.id === activePresetId)?.name}
+          {:else}
+            {t(locale, "batch.settings.presetCustom")}
+          {/if}
+        </span>
+      </div>
       <div class="batch-preset-list">
         {#each presets as preset (preset.id)}
-          <span class="batch-preset-chip">
-            <button type="button" class="ghost-btn" onclick={() => onApplyPreset(preset)}>
+          <span class="batch-preset-chip" class:active={preset.id === activePresetId}>
+            <button
+              type="button"
+              class="ghost-btn"
+              aria-pressed={preset.id === activePresetId}
+              onclick={() => onApplyPreset(preset)}
+            >
               {preset.name}
             </button>
             {#if !preset.id.startsWith("builtin-")}

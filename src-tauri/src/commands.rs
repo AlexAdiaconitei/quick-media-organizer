@@ -613,7 +613,7 @@ pub fn scan_folder_media(
                 !item.paths.iter().any(|file| {
                     excluded
                         .iter()
-                        .any(|dir| crate::batch::runner::is_inside(Path::new(file), dir))
+                        .any(|dir| crate::path_util::is_path_inside_root(dir, Path::new(file)))
                 })
             })
             .collect())

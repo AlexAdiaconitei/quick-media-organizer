@@ -242,10 +242,6 @@ fn looks_like_heif(header: &[u8]) -> bool {
     header.len() >= 12 && &header[4..8] == b"ftyp"
 }
 
-fn is_ignored_path(root: &Path, path: &Path) -> bool {
-    is_path_in_ignored_dir(root, path)
-}
-
 fn is_supported_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())

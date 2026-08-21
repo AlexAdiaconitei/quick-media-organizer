@@ -100,6 +100,37 @@ export function sanitizeStoredSettings(settings: BatchSettings): BatchSettings {
   return settings;
 }
 
+/// Only the parts a preset actually defines: output folder, concurrency and
+/// naming are the user's own choices and must not break the match.
+function profileFingerprint(settings: BatchSettings): string {
+  return stableStringify([
+    settings.video,
+    settings.image,
+    settings.skip_if_savings_below_pct,
+  ]);
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(
+      ([a], [b]) => a.localeCompare(b),
+    );
+    return `{${entries.map(([k, v]) => `${k}:${stableStringify(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/// Which preset the current settings correspond to, so the UI can say so
+/// instead of leaving the user guessing after values change.
+export function matchingPreset(
+  presets: BatchPreset[],
+  settings: BatchSettings,
+): BatchPreset | null {
+  const current = profileFingerprint(settings);
+  return presets.find((preset) => profileFingerprint(preset.settings) === current) ?? null;
+}
+
 export function formatSize(bytes: number): string {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;

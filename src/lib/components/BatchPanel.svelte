@@ -15,6 +15,7 @@
     isTauriAvailable,
     loadCapabilities,
     loadQueueItems,
+    matchingPreset,
     pickFiles,
     sanitizeStoredSettings,
     scanFolder,
@@ -39,6 +40,7 @@
     locale,
     open,
     hasQueue,
+    initialItems = null,
     onClose,
     onSessionChanged,
     onError,
@@ -46,6 +48,8 @@
     locale: Locale;
     open: boolean;
     hasQueue: boolean;
+    /// Seeds the panel with one file (the "optimize this file" entry point).
+    initialItems?: MediaItem[] | null;
     onClose: () => void;
     onSessionChanged: (state: FrontendState) => void;
     onError: (message: string) => void;
@@ -76,6 +80,7 @@
   let loaded = $state(false);
 
   const presets = $derived([...builtInPresets(locale), ...savedPresets]);
+  const activePreset = $derived(matchingPreset(presets, settings));
   const selectedItems = $derived(items.filter((item) => selected.has(item.id)));
   const selectedBytes = $derived(
     selectedItems.reduce((sum, item) => sum + item.size_bytes, 0),
@@ -120,11 +125,36 @@
     };
   });
 
+  let wasOpen = $state(false);
+
   $effect(() => {
-    if (!open || loaded) return;
-    loaded = true;
-    void initialize();
+    if (open === wasOpen) return;
+    wasOpen = open;
+    if (!open) return;
+
+    // Reopening used to drop the user back wherever they left off, which read
+    // as "it skipped the settings". Start at the beginning unless a job is
+    // running or a single file was handed in.
+    cancelling = false;
+    if (initialItems && initialItems.length > 0) {
+      items = dedupeItems(initialItems);
+      selected = new Set(items.map((item) => item.id));
+      step = "settings";
+    } else if (!jobRunning) {
+      step = "select";
+    }
+
+    if (!loaded) {
+      loaded = true;
+      void initialize();
+    }
   });
+
+  function goToStep(next: Step) {
+    if (next === "settings" && selected.size === 0) return;
+    if (next === "run" && !job) return;
+    step = next;
+  }
 
   async function initialize() {
     if (!isTauriAvailable()) {
@@ -146,7 +176,7 @@
         step = "run";
       }
 
-      if (hasQueue && items.length === 0) {
+      if (hasQueue && items.length === 0 && !(initialItems && initialItems.length > 0)) {
         items = await loadQueueItems();
         selected = new Set(items.map((item) => item.id));
       }
@@ -326,14 +356,19 @@
 <svelte:window onkeydown={open ? handleKeydown : undefined} />
 
 {#if open}
-  <div class="modal-backdrop batch-backdrop" role="presentation" onclick={close}>
+  <div class="modal-backdrop batch-backdrop">
+    <button
+      type="button"
+      class="modal-scrim"
+      aria-label={t(locale, "common.close")}
+      onclick={close}
+    ></button>
     <div
       class="modal-card batch-card"
       role="dialog"
       aria-modal="true"
       aria-labelledby="batch-title"
       tabindex="-1"
-      onclick={(event) => event.stopPropagation()}
     >
       <header class="batch-header">
         <div>
@@ -341,9 +376,29 @@
           <p class="batch-subtitle">{t(locale, "batch.subtitle")}</p>
         </div>
         <div class="batch-steps">
-          <span class:active={step === "select"}>{t(locale, "batch.stepSelect")}</span>
-          <span class:active={step === "settings"}>{t(locale, "batch.stepSettings")}</span>
-          <span class:active={step === "run"}>{t(locale, "batch.stepRun")}</span>
+          <button
+            type="button"
+            class:active={step === "select"}
+            onclick={() => goToStep("select")}
+          >
+            {t(locale, "batch.stepSelect")}
+          </button>
+          <button
+            type="button"
+            class:active={step === "settings"}
+            disabled={selected.size === 0}
+            onclick={() => goToStep("settings")}
+          >
+            {t(locale, "batch.stepSettings")}
+          </button>
+          <button
+            type="button"
+            class:active={step === "run"}
+            disabled={!job}
+            onclick={() => goToStep("run")}
+          >
+            {t(locale, "batch.stepRun")}
+          </button>
         </div>
       </header>
 
@@ -378,6 +433,7 @@
             {hasVideos}
             {hasImages}
             {presets}
+            activePresetId={activePreset?.id ?? null}
             onSavePreset={(name) => void savePreset(name)}
             onDeletePreset={(id) => void deletePreset(id)}
             onApplyPreset={applyPreset}
