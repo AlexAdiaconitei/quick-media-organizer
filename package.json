@@ -3,9 +3,15 @@
   "version": "0.1.5",
   "description": "Organize photo and video folders quickly with keyboard shortcuts",
   "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
+    "dev": "tauri dev",
+    "dev:web": "vite dev",
+    "build": "tauri build",
+    "build:web": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "capture-screenshots": "node scripts/capture-screenshots.mjs",
@@ -13,18 +19,18 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-opener": "2.5.4"
   },
   "devDependencies": {
-    "@sveltejs/adapter-static": "^3.0.6",
-    "@sveltejs/kit": "^2.9.0",
-    "@sveltejs/vite-plugin-svelte": "^5.0.0",
-    "@tauri-apps/cli": "^2",
-    "svelte": "^5.0.0",
-    "svelte-check": "^4.0.0",
-    "typescript": "~5.6.2",
-    "vite": "^6.0.3",
-    "playwright": "^1.49.1"
+    "@sveltejs/adapter-static": "3.0.10",
+    "@sveltejs/kit": "2.70.3",
+    "@sveltejs/vite-plugin-svelte": "5.1.1",
+    "@tauri-apps/cli": "2.11.4",
+    "playwright": "1.62.1",
+    "svelte": "5.56.9",
+    "svelte-check": "4.7.6",
+    "typescript": "5.6.3",
+    "vite": "6.4.3"
   }
 }

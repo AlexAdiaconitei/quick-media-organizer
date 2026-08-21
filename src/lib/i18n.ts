@@ -48,7 +48,6 @@ const messages = {
       optimizeFile: "Optimize this file…",
       optimizeFileHint:
         "Opens the batch panel with only this file, and writes the converted copy wherever you choose. The original is untouched.",
-      trimHeading: "Trim",
     },
     renamed: "Renamed",
     trashed: "Moved to _deleted",
@@ -334,7 +333,6 @@ const messages = {
       optimizeFile: "Optimizar este archivo…",
       optimizeFileHint:
         "Abre el panel de lote solo con este archivo y escribe la copia convertida donde elijas. El original no se toca.",
-      trimHeading: "Recortar",
     },
     renamed: "Renombrado",
     trashed: "Movido a _deleted",

@@ -22,10 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+          cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -34,7 +36,7 @@ jobs:
         run: rustup target add aarch64-apple-darwin
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -56,5 +58,5 @@ jobs:
             **SmartScreen:** click *More info* → *Run anyway* if needed.
 
             ### Requirements
-            - **Video trim:** FFmpeg (`brew install ffmpeg` on macOS)
+            - **Video trim and batch optimize:** FFmpeg (`brew install ffmpeg` on macOS, `winget install Gyan.FFmpeg` on Windows)
           args: ${{ matrix.args }}

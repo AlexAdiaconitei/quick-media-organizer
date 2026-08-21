@@ -687,13 +687,13 @@
     if (appState.item?.is_video && trimPanel) {
       if (event.key === "[") {
         event.preventDefault();
-        panelTab = "optimize";
+        panelTab = "rename";
         trimPanel.setStartToPlayhead();
         return;
       }
       if (event.key === "]") {
         event.preventDefault();
-        panelTab = "optimize";
+        panelTab = "rename";
         trimPanel.setEndToPlayhead();
         return;
       }
@@ -865,6 +865,9 @@
               onclick={() => (panelTab = "rename")}
             >
               {t(locale, "sidePanel.tabRename")}
+              {#if pendingVideoTrim}
+                <span class="tab-dot" aria-hidden="true"></span>
+              {/if}
             </button>
             <button
               type="button"
@@ -874,9 +877,6 @@
               onclick={() => (panelTab = "optimize")}
             >
               {t(locale, "sidePanel.tabOptimize")}
-              {#if pendingVideoTrim}
-                <span class="tab-dot" aria-hidden="true"></span>
-              {/if}
             </button>
           </div>
 
@@ -889,9 +889,6 @@
               compact={sidebarLayout}
               pendingTrim={pendingVideoTrim}
             />
-          </div>
-
-          <div class="panel-tab-body" class:hidden={panelTab !== "optimize"}>
             {#if appState.item?.is_video}
               <VideoTrimPanel
                 bind:this={trimPanel}
@@ -904,6 +901,9 @@
                 onApply={(start, end) => void applyVideoTrim(start, end)}
               />
             {/if}
+          </div>
+
+          <div class="panel-tab-body" class:hidden={panelTab !== "optimize"}>
             <div class="optimize-file">
               <button
                 type="button"
