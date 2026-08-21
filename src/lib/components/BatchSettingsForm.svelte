@@ -220,7 +220,7 @@
 
   {#if hasVideos && (tab === "video" || !hasImages)}
     <div class="options-grid">
-      <div class="field-label">
+      <div class="field-label wide">
         {t(locale, "batch.settings.codec")}
         <Select
           value={settings.video.codec}

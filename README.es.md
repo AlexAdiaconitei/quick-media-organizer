@@ -53,6 +53,10 @@ Si te ahorra tiempo, te agradecería de corazón un [café ☕](https://buymeaco
 </p>
 
 <p align="center">
+  <img src="docs/screenshots/batch-settings.png" alt="Ajustes del lote: códec, calidad, resolución, audio y salida" width="620" />
+</p>
+
+<p align="center">
   <img src="docs/screenshots/batch-done.png" alt="Lote terminado con el espacio ahorrado por archivo" width="660" />
 </p>
 

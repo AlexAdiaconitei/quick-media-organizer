@@ -53,6 +53,10 @@ If it saves you time, I'd genuinely appreciate a [coffee ☕](https://buymeacoff
 </p>
 
 <p align="center">
+  <img src="docs/screenshots/batch-settings.png" alt="Batch settings: codec, quality, resolution, audio and output" width="620" />
+</p>
+
+<p align="center">
   <img src="docs/screenshots/batch-done.png" alt="Finished batch job showing the space saved per file" width="660" />
 </p>
 

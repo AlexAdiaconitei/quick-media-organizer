@@ -5,6 +5,7 @@ export type ScreenshotMode =
   | "workspace"
   | "workspace-video"
   | "batch-select"
+  | "batch-settings"
   | "batch-progress"
   | "batch-done";
 
@@ -13,6 +14,7 @@ const MODES: ScreenshotMode[] = [
   "workspace",
   "workspace-video",
   "batch-select",
+  "batch-settings",
   "batch-progress",
   "batch-done",
 ];

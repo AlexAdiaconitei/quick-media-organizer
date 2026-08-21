@@ -63,6 +63,7 @@
   let batchInitialItems = $state<MediaItem[] | null>(null);
   let batchAutoStart = $state(false);
   let batchDemoJob = $state<BatchJobStatus | null>(null);
+  let batchDemoStep = $state<"select" | "settings" | "run" | null>(null);
   let panelTab = $state<"rename" | "optimize">("rename");
   let trimNotice = $state("");
   let availableUpdate = $state<AvailableUpdate | null>(null);
@@ -189,11 +190,14 @@
     showMetadata = true;
     layoutMode = "sidebar";
 
-    if (mode === "batch-select" || mode === "batch-progress" || mode === "batch-done") {
+    if (mode.startsWith("batch-")) {
       appState = buildScreenshotWorkspaceState();
       batchInitialItems = buildScreenshotBatchItems();
       batchDemoJob =
-        mode === "batch-select" ? null : buildScreenshotBatchJob(mode === "batch-done");
+        mode === "batch-progress" || mode === "batch-done"
+          ? buildScreenshotBatchJob(mode === "batch-done")
+          : null;
+      batchDemoStep = mode === "batch-settings" ? "settings" : null;
       showBatch = true;
       return;
     }
@@ -1109,6 +1113,7 @@
   initialSettings={batchInitialItems && !screenshotMode ? quickSettings : null}
   autoStart={batchAutoStart}
   demoJob={batchDemoJob}
+  demoStep={batchDemoStep}
   demoMode={!!screenshotMode}
   onClose={() => {
     showBatch = false;

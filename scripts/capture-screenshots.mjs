@@ -22,6 +22,8 @@ const WELCOME_VIEWPORT = { width: 880, height: 660 };
 const WORKSPACE_VIEWPORT = { width: 1320, height: 1120 };
 /** The video sidebar also carries the trim panel and its notes */
 const VIDEO_VIEWPORT = { width: 1320, height: 1440 };
+/** The settings step is one long form; unrolled it needs the room */
+const SETTINGS_VIEWPORT = { width: 1200, height: 1900 };
 
 async function waitForServer(maxMs = 45000) {
   const start = Date.now();
@@ -75,10 +77,16 @@ async function captureWorkspace(page, mode, filename) {
 
 /** The batch panel is a modal: capture the dialog, not the dimmed page. */
 async function captureBatch(page, mode, filename) {
-  await page.setViewportSize(WORKSPACE_VIEWPORT);
+  await page.setViewportSize(
+    mode === "batch-settings" ? SETTINGS_VIEWPORT : WORKSPACE_VIEWPORT,
+  );
   await page.goto(`${BASE}/?screenshot=${mode}`, { waitUntil: "networkidle" });
   await page.waitForSelector(".batch-card", { timeout: 15000 });
-  if (mode === "batch-select") {
+  if (mode === "batch-settings") {
+    await page.waitForSelector(".batch-settings", { timeout: 15000 });
+    // The settings list scrolls inside the dialog; unroll it for the shot.
+    await page.addStyleTag({ content: ".batch-body { max-height: none !important; }" });
+  } else if (mode === "batch-select") {
     await page.waitForSelector(".batch-tile", { timeout: 15000 });
   } else if (mode === "batch-done") {
     await page.waitForSelector(".batch-summary-savings", { timeout: 15000 });
@@ -114,6 +122,7 @@ async function main() {
   await captureWorkspace(page, "workspace", "workspace.png");
   await captureWorkspace(page, "workspace-video", "workspace-video.png");
   await captureBatch(page, "batch-select", "batch-select.png");
+  await captureBatch(page, "batch-settings", "batch-settings.png");
   await captureBatch(page, "batch-progress", "batch-progress.png");
   await captureBatch(page, "batch-done", "batch-done.png");
 

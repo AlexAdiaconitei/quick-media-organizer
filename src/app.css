@@ -2073,3 +2073,19 @@ input[type="range"]:disabled {
 .batch-item-list {
   max-width: 860px;
 }
+
+/* Wide dialogs stretched these controls away from their labels. */
+.options-grid .switch-row,
+.options-grid .field-label input[type="range"],
+.batch-settings .radio-row {
+  max-width: 560px;
+}
+
+.batch-preset-save input[type="text"] {
+  max-width: 320px;
+}
+
+/* The codec labels are long, but not full-dialog long. */
+.field-label.wide .select {
+  max-width: 26rem;
+}

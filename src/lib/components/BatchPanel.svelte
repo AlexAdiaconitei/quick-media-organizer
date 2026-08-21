@@ -45,6 +45,7 @@
     initialSettings = null,
     autoStart = false,
     demoJob = null,
+    demoStep = null,
     demoMode = false,
     onClose,
     onSessionChanged,
@@ -62,6 +63,8 @@
     /// Screenshot mode: a canned job, so the progress view can be captured
     /// without encoding anything.
     demoJob?: BatchJobStatus | null;
+    /// Which step to show in screenshot mode.
+    demoStep?: Step | null;
     demoMode?: boolean;
     onClose: () => void;
     onSessionChanged: (state: FrontendState) => void;
@@ -156,8 +159,8 @@
       }
       if (demoJob) {
         job = demoJob;
-        step = "run";
       }
+      step = demoStep ?? (demoJob ? "run" : "select");
       return;
     }
 
