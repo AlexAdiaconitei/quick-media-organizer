@@ -31,10 +31,14 @@ Si te ahorra tiempo, te agradecería de corazón un [café ☕](https://buymeaco
 - **Renombrar** fotos y vídeos al instante con `Enter`
 - **Mover** a subcarpetas como `gym/`, `viajes/portugal/`, `documentos/` con `Ctrl+F`
 - **Recortar vídeos sin pérdida** (FFmpeg, copia de streams) antes de guardar
+- **Optimizar en lote** una carpeta entera: reducir vídeos a H.265/H.264 con la
+  resolución que elijas, o convertir fotos a JPEG/WebP/AVIF, en una carpeta nueva
 - **Eliminar con seguridad** a `_deleted/` dentro de tu carpeta — nunca permanente, siempre deshacer
 - **Saltar**, **navegar** y **deshacer** sin ratón
 - **Live Photos** (`.heic` + `.mov`) se mueven, renombran y eliminan juntos
 - Se conservan las fechas **EXIF** y los timestamps originales
+- **Se actualiza sola** desde las releases de este repositorio, enseñando las
+  notas antes de instalar
 
 <p align="center">
   <img src="docs/screenshots/workspace.png" alt="Interfaz con foto y atajos de teclado" width="660" />
@@ -50,7 +54,7 @@ Si te ahorra tiempo, te agradecería de corazón un [café ☕](https://buymeaco
 
 Última versión para tu plataforma:
 
-**[GitHub Releases →](https://github.com/FerranVidalBelles/quick-media-organizer/releases)**
+**[GitHub Releases →](../../releases)**
 
 macOS (`.dmg`) · Windows (`.msi` / `.exe`)
 
@@ -75,6 +79,7 @@ macOS (`.dmg`) · Windows (`.msi` / `.exe`)
 | `←` `→` | Anterior / siguiente |
 | `Ctrl+Z` / `⌘Z` | Deshacer |
 | `Ctrl+M` / `⌘M` | Ver metadata |
+| `Ctrl+B` / `⌘B` | Optimizar en lote |
 | `Ctrl+O` / `⌘O` | Opciones |
 | `?` | Ayuda |
 | `[` `]` | Marcar inicio / fin de recorte de vídeo |
@@ -121,22 +126,51 @@ app sigue siendo MIT. El archivo `FFMPEG-LICENSE.txt` viaja con la Standard.
 
 ---
 
+### Actualizaciones dentro de la app en un fork
+
+Nada en la app apunta a un repositorio fijo: el endpoint de actualización se
+escribe al compilar a partir de `GITHUB_REPOSITORY` (o del remote `origin` si
+compilas en local), así que un fork se actualiza desde sus propias releases.
+
+Para activarlo, genera una vez el par de claves de firma y añade tres secrets
+al repositorio:
+
+```bash
+pnpm tauri signer generate -w .tauri/qmo.key
+```
+
+| Secret | Valor |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | contenido de `.tauri/qmo.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | la contraseña que elijas |
+| `TAURI_SIGNING_PUBLIC_KEY` | contenido de `.tauri/qmo.key.pub` |
+
+Después publica un tag. Las releases sin esos secrets se siguen construyendo y
+publicando: simplemente salen sin actualizador integrado.
+
+---
+
 ## Compilar
 
-Requisitos: Node.js 20+, Rust
+Requisitos: [Node.js](https://nodejs.org/) 20+, [Rust](https://rustup.rs/),
+[pnpm](https://pnpm.io/) (`corepack enable`)
 
 ```bash
 git clone https://github.com/FerranVidalBelles/quick-media-organizer.git
 cd quick-media-organizer
-npm install
-npm run tauri dev
+pnpm install
+pnpm dev            # abre la app de escritorio
 ```
 
-Instaladores:
-
-```bash
-npm run tauri build
-```
+| Comando | Qué hace |
+|---|---|
+| `pnpm dev` | Abre la app de escritorio (Tauri + Vite) |
+| `pnpm dev:web` | Solo el frontend, en el navegador — sin IPC, casi nada funciona |
+| `pnpm check` | Comprobación de Svelte y TypeScript |
+| `pnpm build` | Instalador Lite, sin FFmpeg |
+| `pnpm build:full` | Descarga FFmpeg y genera el instalador estándar |
+| `pnpm fetch-ffmpeg` | Solo descarga FFmpeg en `src-tauri/binaries` |
+| `cargo test` (en `src-tauri`) | Tests de Rust; los de FFmpeg se saltan si no está |
 
 ---
 

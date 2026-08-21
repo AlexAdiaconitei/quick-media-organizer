@@ -5,6 +5,7 @@
   import HelpOverlay from "$lib/components/HelpOverlay.svelte";
   import MetadataPanel from "$lib/components/MetadataPanel.svelte";
   import QuickOptimize from "$lib/components/QuickOptimize.svelte";
+  import UpdateDialog from "$lib/components/UpdateDialog.svelte";
   import OptionsPanel from "$lib/components/OptionsPanel.svelte";
   import PhotoViewer from "$lib/components/PhotoViewer.svelte";
   import RenameInput from "$lib/components/RenameInput.svelte";
@@ -28,6 +29,12 @@
     type ScreenshotMode,
   } from "$lib/screenshotDemo";
   import { modKey, modLabel, skipModLabel, isSkipShortcut } from "$lib/shortcuts";
+  import {
+    checkForUpdate,
+    installUpdate,
+    loadUpdateContext,
+    type AvailableUpdate,
+  } from "$lib/updater";
   import { formatBytes } from "$lib/utils";
   import type {
     ActionResult,
@@ -54,6 +61,11 @@
   let batchAutoStart = $state(false);
   let panelTab = $state<"rename" | "optimize">("rename");
   let trimNotice = $state("");
+  let availableUpdate = $state<AvailableUpdate | null>(null);
+  let releasesUrl = $state<string | null>(null);
+  let showUpdate = $state(false);
+  let installingUpdate = $state(false);
+  let updateProgress = $state(0);
   /// Settings for the quick picker in the Optimize tab, handed to the batch
   /// panel when the user runs it or opens the advanced view.
   let quickSettings = $state<BatchSettings>(defaultBatchSettings());
@@ -224,6 +236,7 @@
 
       focusRenameInput();
       skipUiPersist = false;
+      void scheduleUpdateCheck();
     })().catch((error) => {
       void reportError(String(error), { phase: "startup" });
       showToast(t(locale, "startupError"), true, 8000);
@@ -232,6 +245,29 @@
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
   });
+
+  async function scheduleUpdateCheck() {
+    const context = await loadUpdateContext();
+    releasesUrl = context?.releases_url ?? null;
+    if (!context?.updater_configured) return;
+
+    setTimeout(() => {
+      void checkForUpdate().then((update) => {
+        availableUpdate = update;
+      });
+    }, 4000);
+  }
+
+  async function runUpdateInstall() {
+    installingUpdate = true;
+    updateProgress = 0;
+    try {
+      await installUpdate((fraction) => (updateProgress = fraction));
+    } catch (error) {
+      installingUpdate = false;
+      showToast(format(locale, "update.failed", { error: String(error) }), true, 10000);
+    }
+  }
 
   function focusRenameInput() {
     queueMicrotask(() => renameInput?.focus());
@@ -797,6 +833,19 @@
         <button class:active={locale === "en"} onclick={() => changeLocale("en")}>EN</button>
         <button class:active={locale === "es"} onclick={() => changeLocale("es")}>ES</button>
       </div>
+      {#if availableUpdate}
+        <button
+          class="ghost-btn update-chip"
+          onclick={() => (showUpdate = true)}
+          title={format(locale, "update.versions", {
+            current: availableUpdate.currentVersion,
+            next: availableUpdate.version,
+          })}
+        >
+          <span class="update-dot" aria-hidden="true"></span>
+          {t(locale, "update.available")}
+        </button>
+      {/if}
       {#if !showWelcome}
         <button class="ghost-btn" onclick={openBatchPanel}>
           {t(locale, "batch.open")}
@@ -1053,6 +1102,17 @@
     appState = state;
   }}
   onError={(message) => showToast(message, true, 8000)}
+/>
+
+<UpdateDialog
+  {locale}
+  open={showUpdate}
+  update={availableUpdate}
+  {releasesUrl}
+  installing={installingUpdate}
+  progress={updateProgress}
+  onInstall={() => void runUpdateInstall()}
+  onClose={() => (showUpdate = false)}
 />
 
 <HelpOverlay {locale} open={showHelp} onClose={closeHelp} />

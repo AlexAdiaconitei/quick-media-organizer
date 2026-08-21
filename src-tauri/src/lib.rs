@@ -25,7 +25,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
             let app_data_dir = app
                 .path()
                 .app_data_dir()
@@ -77,6 +82,7 @@ pub fn run() {
             commands::probe_video_duration,
             commands::scan_folder_media,
             commands::get_active_batch_job,
+            commands::get_update_context,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

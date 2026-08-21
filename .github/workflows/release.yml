@@ -43,9 +43,30 @@ jobs:
       - name: Fetch FFmpeg for bundling
         run: pnpm fetch-ffmpeg
 
+      # The endpoint follows whichever repository is building, so a fork
+      # updates from its own releases. Without signing secrets this writes
+      # nothing and the build simply ships without the in-app updater.
+      - name: Configure the updater
+        id: updater
+        shell: bash
+        env:
+          TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          node scripts/updater-config.mjs
+          if [ -f src-tauri/tauri.updater.conf.json ]; then
+            echo "config=--config src-tauri/tauri.updater.conf.json" >> "$GITHUB_OUTPUT"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "config=" >> "$GITHUB_OUTPUT"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Quick Media Organizer ${{ github.ref_name }}"
@@ -56,6 +77,9 @@ jobs:
 
             **Standard** — FFmpeg included. Trimming and batch optimizing work
             straight after install, nothing else to set up.
+
+            Both check for updates from this repository's releases and can
+            install them from inside the app.
 
             **Lite** (`-lite` in the file name) — same app, ~50 MB smaller,
             without FFmpeg. Renaming and organizing work as they are; trimming
@@ -80,12 +104,16 @@ jobs:
             The bundled FFmpeg is GPL-licensed and stays a separate program,
             invoked as a subprocess; the app itself is MIT. See
             FFMPEG-LICENSE.txt next to the installed app.
-          args: ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json
+          includeUpdaterJson: ${{ steps.updater.outputs.enabled }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json ${{ steps.updater.outputs.config }}
 
       # The Rust binary is already built, so this only repeats the bundling
       # step, without the FFmpeg payload.
       - name: Build the lite installer
-        run: pnpm tauri build ${{ matrix.args }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build ${{ matrix.args }} ${{ steps.updater.outputs.config }}
 
       - name: Upload the lite installer
         shell: bash

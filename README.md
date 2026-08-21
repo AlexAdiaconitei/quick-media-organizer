@@ -31,10 +31,14 @@ If it saves you time, I'd genuinely appreciate a [coffee ☕](https://buymeacoff
 - **Rename** photos and videos in seconds with `Enter`
 - **Move** files into subfolders like `gym/`, `trips/portugal/`, `paperwork/` with `Ctrl+F`
 - **Trim videos losslessly** (FFmpeg stream copy — no re-encoding) before saving
+- **Batch optimize** a whole folder: shrink videos to H.265/H.264 at the
+  resolution you pick, or convert photos to JPEG/WebP/AVIF, into a new folder
 - **Delete safely** to `_deleted/` inside your folder — never permanent, always undoable
 - **Skip**, **navigate**, and **undo** without touching the mouse
 - **Live Photos** (`.heic` + `.mov`) move, rename, and delete together
 - Original **EXIF dates** and file timestamps are preserved
+- **Updates itself** from this repository's releases, with the release notes
+  shown before you install
 
 <p align="center">
   <img src="docs/screenshots/workspace.png" alt="Photo workspace with keyboard shortcuts" width="660" />
@@ -50,7 +54,7 @@ If it saves you time, I'd genuinely appreciate a [coffee ☕](https://buymeacoff
 
 Get the latest release for your platform:
 
-**[GitHub Releases →](https://github.com/FerranVidalBelles/quick-media-organizer/releases)**
+**[GitHub Releases →](../../releases)**
 
 macOS (`.dmg`) · Windows (`.msi` / `.exe`)
 
@@ -75,6 +79,7 @@ macOS (`.dmg`) · Windows (`.msi` / `.exe`)
 | `←` `→` | Previous / next |
 | `Ctrl+Z` / `⌘Z` | Undo |
 | `Ctrl+M` / `⌘M` | Toggle metadata |
+| `Ctrl+B` / `⌘B` | Batch optimize |
 | `Ctrl+O` / `⌘O` | Options |
 | `?` | Help |
 | `[` `]` | Set video trim start / end |
@@ -121,22 +126,51 @@ installer.
 
 ---
 
+### In-app updates on a fork
+
+Nothing in the app points at a fixed repository: the update endpoint is written
+at build time from `GITHUB_REPOSITORY` (or the `origin` remote when building
+locally), so a fork updates from its own releases.
+
+To enable it, generate a signing key pair once and add three repository
+secrets:
+
+```bash
+pnpm tauri signer generate -w .tauri/qmo.key
+```
+
+| Secret | Value |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | contents of `.tauri/qmo.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the password you chose |
+| `TAURI_SIGNING_PUBLIC_KEY` | contents of `.tauri/qmo.key.pub` |
+
+Then push a tag. Releases without those secrets still build and publish — they
+just ship without the in-app updater.
+
+---
+
 ## Build from source
 
-Requirements: [Node.js](https://nodejs.org/) 20+, [Rust](https://rustup.rs/)
+Requirements: [Node.js](https://nodejs.org/) 20+, [Rust](https://rustup.rs/),
+[pnpm](https://pnpm.io/) (`corepack enable`)
 
 ```bash
 git clone https://github.com/FerranVidalBelles/quick-media-organizer.git
 cd quick-media-organizer
-npm install
-npm run tauri dev
+pnpm install
+pnpm dev            # starts the desktop app
 ```
 
-Build installers:
-
-```bash
-npm run tauri build
-```
+| Command | What it does |
+|---|---|
+| `pnpm dev` | Runs the desktop app (Tauri + Vite) |
+| `pnpm dev:web` | Frontend only, in a browser — no IPC, most actions are inert |
+| `pnpm check` | Svelte and TypeScript check |
+| `pnpm build` | Lite installer, without FFmpeg |
+| `pnpm build:full` | Downloads FFmpeg and builds the standard installer |
+| `pnpm fetch-ffmpeg` | Only fetches FFmpeg into `src-tauri/binaries` |
+| `cargo test` (in `src-tauri`) | Rust tests; the FFmpeg ones skip themselves if it is missing |
 
 ---
 

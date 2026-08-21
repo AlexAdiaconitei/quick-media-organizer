@@ -631,3 +631,62 @@ pub fn get_active_batch_job(
         .active_job_id()
         .and_then(|job_id| runner.snapshot(&job_id)))
 }
+
+/// What the UI needs to talk about updates without hardcoding a repository.
+#[derive(serde::Serialize)]
+pub struct UpdateContext {
+    pub current_version: String,
+    /// True when this build was signed and given an update endpoint.
+    pub updater_configured: bool,
+    /// Releases page of whichever repository published this build.
+    pub releases_url: Option<String>,
+}
+
+/// Derives the repository from the updater endpoint baked into the build, so a
+/// fork points at its own releases with nothing to edit by hand.
+fn releases_url_from_endpoint(endpoint: &str) -> Option<String> {
+    let marker = "/releases/";
+    let index = endpoint.find(marker)?;
+    Some(format!("{}/releases", &endpoint[..index]))
+}
+
+#[tauri::command]
+pub fn get_update_context(app: AppHandle) -> Result<UpdateContext, String> {
+    let updater = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    let endpoint = updater
+        .get("endpoints")
+        .and_then(|endpoints| endpoints.as_array())
+        .and_then(|endpoints| endpoints.first())
+        .and_then(|endpoint| endpoint.as_str())
+        .map(str::to_string);
+
+    Ok(UpdateContext {
+        current_version: app.package_info().version.to_string(),
+        updater_configured: endpoint.is_some(),
+        releases_url: endpoint.as_deref().and_then(releases_url_from_endpoint),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::releases_url_from_endpoint;
+
+    #[test]
+    fn derives_the_releases_page_from_the_update_endpoint() {
+        assert_eq!(
+            releases_url_from_endpoint(
+                "https://github.com/someone/quick-media-organizer/releases/latest/download/latest.json"
+            )
+            .as_deref(),
+            Some("https://github.com/someone/quick-media-organizer/releases")
+        );
+        assert_eq!(releases_url_from_endpoint("https://example.com/feed.json"), None);
+    }
+}

@@ -1,0 +1,68 @@
+#!/usr/bin/env node
+/**
+ * Writes src-tauri/tauri.updater.conf.json for whichever repository is building.
+ *
+ *   node scripts/updater-config.mjs
+ *
+ * The endpoint is derived from GITHUB_REPOSITORY when running in Actions, and
+ * from the git "origin" remote otherwise, so a fork updates from its own
+ * releases without anyone editing a URL. The public key comes from
+ * TAURI_SIGNING_PUBLIC_KEY; without it the script writes nothing and exits 0,
+ * which lets a repository without signing secrets keep publishing normally —
+ * just without the in-app updater.
+ */
+
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const TARGET = join(ROOT, "src-tauri", "tauri.updater.conf.json");
+
+function repositorySlug() {
+  if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY;
+
+  const remote = execFileSync("git", ["remote", "get-url", "origin"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  }).trim();
+
+  // git@github.com:owner/repo.git and https://github.com/owner/repo.git
+  const match = remote.match(/github\.com[:/]([^/]+)\/([^/]+?)(\.git)?$/);
+  if (!match) {
+    throw new Error(`Cannot work out the GitHub repository from "${remote}"`);
+  }
+  return `${match[1]}/${match[2]}`;
+}
+
+function main() {
+  const pubkey = process.env.TAURI_SIGNING_PUBLIC_KEY?.trim();
+  if (!pubkey) {
+    process.stdout.write(
+      "TAURI_SIGNING_PUBLIC_KEY is not set — building without the updater.\n" +
+        "Generate a key pair with `pnpm tauri signer generate -w .tauri/qmo.key`.\n",
+    );
+    return;
+  }
+
+  const slug = repositorySlug();
+  const config = {
+    $schema: "../node_modules/@tauri-apps/cli/config.schema.json",
+    bundle: { createUpdaterArtifacts: true },
+    plugins: {
+      updater: {
+        pubkey,
+        endpoints: [
+          `https://github.com/${slug}/releases/latest/download/latest.json`,
+        ],
+        windows: { installMode: "passive" },
+      },
+    },
+  };
+
+  writeFileSync(TARGET, `${JSON.stringify(config, null, 2)}\n`);
+  process.stdout.write(`Updater will check ${config.plugins.updater.endpoints[0]}\n`);
+}
+
+main();

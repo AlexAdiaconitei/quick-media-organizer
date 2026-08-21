@@ -23,3 +23,11 @@ docs/DEV.md
 # Downloaded by scripts/fetch-ffmpeg.mjs; never committed (~200 MB)
 src-tauri/binaries/
 src-tauri/.ffmpeg-download/
+
+# Written by scripts/updater-config.mjs at build time
+src-tauri/tauri.updater.conf.json
+
+# Updater signing keys
+.tauri/
+*.key
+*.key.pub
