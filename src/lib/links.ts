@@ -2,7 +2,6 @@ export const LINKS = {
   buyMeACoffee: "https://buymeacoffee.com/ferran_vidal",
   email: "mailto:ferranvidaldev@gmail.com",
   linkedIn: "https://www.linkedin.com/in/ferran-vidal-belles/",
-  github: "https://github.com/FerranVidalBelles/quick-media-organizer",
 } as const;
 
 export async function openExternal(url: string): Promise<void> {
