@@ -91,6 +91,21 @@ export function builtInPresets(locale: Locale): BatchPreset[] {
   ];
 }
 
+const VIDEO_PRESET_IDS = ["builtin-max-savings", "builtin-balanced", "builtin-remux"];
+
+/// Presets that make sense for one kind of file, for the compact picker in the
+/// side panel.
+export function builtInPresetsFor(
+  locale: Locale,
+  kind: "video" | "image",
+): BatchPreset[] {
+  return builtInPresets(locale).filter((preset) =>
+    kind === "video"
+      ? VIDEO_PRESET_IDS.includes(preset.id)
+      : !VIDEO_PRESET_IDS.includes(preset.id),
+  );
+}
+
 /// Settings coming back from disk may name a destructive output mode; it is
 /// downgraded so the confirmation dialog has to be answered again.
 export function sanitizeStoredSettings(settings: BatchSettings): BatchSettings {

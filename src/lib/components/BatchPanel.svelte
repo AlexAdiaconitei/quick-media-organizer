@@ -5,6 +5,7 @@
   import BatchReplaceConfirmDialog from "./BatchReplaceConfirmDialog.svelte";
   import BatchSelectGrid from "./BatchSelectGrid.svelte";
   import BatchSettingsForm from "./BatchSettingsForm.svelte";
+  import Switch from "./Switch.svelte";
   import {
     activeJob,
     builtInPresets,
@@ -41,6 +42,8 @@
     open,
     hasQueue,
     initialItems = null,
+    initialSettings = null,
+    autoStart = false,
     onClose,
     onSessionChanged,
     onError,
@@ -50,6 +53,10 @@
     hasQueue: boolean;
     /// Seeds the panel with one file (the "optimize this file" entry point).
     initialItems?: MediaItem[] | null;
+    /// Settings chosen outside the panel, e.g. by the quick picker.
+    initialSettings?: BatchSettings | null;
+    /// Starts the job as soon as the panel opens ("Optimize now").
+    autoStart?: boolean;
     onClose: () => void;
     onSessionChanged: (state: FrontendState) => void;
     onError: (message: string) => void;
@@ -131,11 +138,23 @@
     if (open === wasOpen) return;
     wasOpen = open;
     if (!open) return;
+    cancelling = false;
+    void openPanel();
+  });
+
+  async function openPanel() {
+    if (!loaded) {
+      loaded = true;
+      await initialize();
+    }
+
+    if (initialSettings) {
+      settings = sanitizeStoredSettings(structuredClone($state.snapshot(initialSettings)));
+    }
 
     // Reopening used to drop the user back wherever they left off, which read
     // as "it skipped the settings". Start at the beginning unless a job is
     // running or a single file was handed in.
-    cancelling = false;
     if (initialItems && initialItems.length > 0) {
       items = dedupeItems(initialItems);
       selected = new Set(items.map((item) => item.id));
@@ -144,11 +163,10 @@
       step = "select";
     }
 
-    if (!loaded) {
-      loaded = true;
-      void initialize();
+    if (autoStart && selected.size > 0 && !jobRunning) {
+      await start();
     }
-  });
+  }
 
   function goToStep(next: Step) {
     if (next === "settings" && selected.size === 0) return;
@@ -269,9 +287,11 @@
   }
 
   function applyPreset(preset: BatchPreset) {
+    // $state.snapshot first: structuredClone throws on a reactive proxy, which
+    // is why clicking a saved preset used to do nothing at all.
     // Output mode is part of the preset, but a destructive one never survives
     // a load: it has to go through the confirmation dialog again.
-    settings = sanitizeStoredSettings(structuredClone(preset.settings));
+    settings = sanitizeStoredSettings(structuredClone($state.snapshot(preset.settings)));
   }
 
   async function savePreset(name: string) {
@@ -419,10 +439,10 @@
             <button type="button" class="ghost-btn" disabled={busy} onclick={addFiles}>
               {t(locale, "batch.select.addFiles")}
             </button>
-            <label class="checkbox-row inline">
-              <input type="checkbox" bind:checked={recursiveScan} />
-              <span>{t(locale, "batch.select.includeSubfolders")}</span>
-            </label>
+            <Switch
+              bind:checked={recursiveScan}
+              label={t(locale, "batch.select.includeSubfolders")}
+            />
           </div>
           <BatchSelectGrid {locale} {items} bind:selected {busy} />
         {:else if step === "settings"}

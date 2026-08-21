@@ -1,6 +1,16 @@
 <script lang="ts">
+  import Select from "./Select.svelte";
+  import Switch from "./Switch.svelte";
   import { format, t, type Locale } from "../i18n";
-  import type { BatchPreset, BatchSettings, FfmpegCapabilities } from "../types";
+  import type {
+    AudioMode,
+    BatchPreset,
+    BatchSettings,
+    ConflictPolicy,
+    FfmpegCapabilities,
+    ImageFormat,
+    VideoCodec,
+  } from "../types";
 
   let {
     locale,
@@ -44,6 +54,81 @@
     settings.output.mode === "subfolder" ? settings.output.name : "_optimized",
   );
 
+  const codecOptions = $derived(
+    [
+      capabilities.h265 && {
+        value: "h265" as VideoCodec,
+        label: t(locale, "batch.settings.codecH265"),
+      },
+      capabilities.h264 && {
+        value: "h264" as VideoCodec,
+        label: t(locale, "batch.settings.codecH264"),
+      },
+      capabilities.av1 && {
+        value: "av1" as VideoCodec,
+        label: t(locale, "batch.settings.codecAv1"),
+      },
+      { value: "copy" as VideoCodec, label: t(locale, "batch.settings.codecCopy") },
+    ].filter(Boolean) as { value: VideoCodec; label: string }[],
+  );
+
+  const speedOptions = $derived([
+    { value: "slow", label: t(locale, "batch.settings.speedSlow") },
+    { value: "medium", label: t(locale, "batch.settings.speedMedium") },
+    { value: "fast", label: t(locale, "batch.settings.speedFast") },
+  ]);
+
+  // 0 stands for "keep what the source has", so the list can stay numeric.
+  const heightOptions = $derived([
+    { value: 0, label: t(locale, "batch.settings.keepResolution") },
+    { value: 720, label: "720p" },
+    { value: 1080, label: "1080p" },
+    { value: 1440, label: "1440p" },
+    { value: 2160, label: "2160p (4K)" },
+  ]);
+
+  const fpsOptions = $derived([
+    { value: 0, label: t(locale, "batch.settings.keepFps") },
+    { value: 24, label: "24" },
+    { value: 30, label: "30" },
+    { value: 60, label: "60" },
+  ]);
+
+  const audioOptions = $derived([
+    { value: "aac" as AudioMode, label: t(locale, "batch.settings.audioAac") },
+    { value: "copy" as AudioMode, label: t(locale, "batch.settings.audioCopy") },
+    { value: "drop" as AudioMode, label: t(locale, "batch.settings.audioDrop") },
+  ]);
+
+  const formatOptions = $derived(
+    [
+      { value: "jpeg" as ImageFormat, label: t(locale, "batch.settings.formatJpeg") },
+      capabilities.webp && {
+        value: "webp" as ImageFormat,
+        label: t(locale, "batch.settings.formatWebp"),
+      },
+      capabilities.avif && {
+        value: "avif" as ImageFormat,
+        label: t(locale, "batch.settings.formatAvif"),
+      },
+      { value: "png" as ImageFormat, label: t(locale, "batch.settings.formatPng") },
+      { value: "keep" as ImageFormat, label: t(locale, "batch.settings.formatKeep") },
+    ].filter(Boolean) as { value: ImageFormat; label: string }[],
+  );
+
+  const edgeOptions = $derived([
+    { value: 0, label: t(locale, "batch.settings.keepSize") },
+    { value: 1920, label: "1920 px" },
+    { value: 2560, label: "2560 px" },
+    { value: 3840, label: "3840 px" },
+  ]);
+
+  const conflictOptions = $derived([
+    { value: "rename" as ConflictPolicy, label: t(locale, "batch.settings.conflictRename") },
+    { value: "skip" as ConflictPolicy, label: t(locale, "batch.settings.conflictSkip") },
+    { value: "overwrite" as ConflictPolicy, label: t(locale, "batch.settings.conflictOverwrite") },
+  ]);
+
   function chooseOutput(mode: "subfolder" | "custom_folder" | "replace_original") {
     if (mode === "replace_original") {
       // Never flipped here: the parent opens the confirmation dialog and only
@@ -61,11 +146,6 @@
 
   function setSubfolderName(value: string) {
     settings.output = { mode: "subfolder", name: value };
-  }
-
-  function numberOrNull(value: string): number | null {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }
 </script>
 
@@ -140,21 +220,15 @@
 
   {#if hasVideos && (tab === "video" || !hasImages)}
     <div class="options-grid">
-      <label class="field-label">
+      <div class="field-label">
         {t(locale, "batch.settings.codec")}
-        <select bind:value={settings.video.codec}>
-          {#if capabilities.h265}
-            <option value="h265">{t(locale, "batch.settings.codecH265")}</option>
-          {/if}
-          {#if capabilities.h264}
-            <option value="h264">{t(locale, "batch.settings.codecH264")}</option>
-          {/if}
-          {#if capabilities.av1}
-            <option value="av1">{t(locale, "batch.settings.codecAv1")}</option>
-          {/if}
-          <option value="copy">{t(locale, "batch.settings.codecCopy")}</option>
-        </select>
-      </label>
+        <Select
+          value={settings.video.codec}
+          options={codecOptions}
+          onchange={(codec) => (settings.video.codec = codec)}
+          ariaLabel={t(locale, "batch.settings.codec")}
+        />
+      </div>
 
       {#if settings.video.codec !== "copy"}
         <label class="field-label">
@@ -163,52 +237,45 @@
           <small class="option-hint">{t(locale, "batch.settings.crfHint")}</small>
         </label>
 
-        <label class="field-label">
+        <div class="field-label narrow">
           {t(locale, "batch.settings.speed")}
-          <select bind:value={settings.video.speed_preset}>
-            <option value="slow">{t(locale, "batch.settings.speedSlow")}</option>
-            <option value="medium">{t(locale, "batch.settings.speedMedium")}</option>
-            <option value="fast">{t(locale, "batch.settings.speedFast")}</option>
-          </select>
-        </label>
+          <Select
+            value={settings.video.speed_preset}
+            options={speedOptions}
+            onchange={(speed) => (settings.video.speed_preset = speed)}
+            ariaLabel={t(locale, "batch.settings.speed")}
+          />
+        </div>
 
-        <label class="field-label">
+        <div class="field-label narrow">
           {t(locale, "batch.settings.maxHeight")}
-          <select
-            value={settings.video.max_height ?? ""}
-            onchange={(event) =>
-              (settings.video.max_height = numberOrNull(event.currentTarget.value))}
-          >
-            <option value="">{t(locale, "batch.settings.keepResolution")}</option>
-            <option value="720">720p</option>
-            <option value="1080">1080p</option>
-            <option value="1440">1440p</option>
-            <option value="2160">2160p (4K)</option>
-          </select>
-        </label>
+          <Select
+            value={settings.video.max_height ?? 0}
+            options={heightOptions}
+            onchange={(height) => (settings.video.max_height = height || null)}
+            ariaLabel={t(locale, "batch.settings.maxHeight")}
+          />
+        </div>
 
-        <label class="field-label">
+        <div class="field-label narrow">
           {t(locale, "batch.settings.maxFps")}
-          <select
-            value={settings.video.max_fps ?? ""}
-            onchange={(event) =>
-              (settings.video.max_fps = numberOrNull(event.currentTarget.value))}
-          >
-            <option value="">{t(locale, "batch.settings.keepFps")}</option>
-            <option value="24">24</option>
-            <option value="30">30</option>
-            <option value="60">60</option>
-          </select>
-        </label>
+          <Select
+            value={settings.video.max_fps ?? 0}
+            options={fpsOptions}
+            onchange={(fps) => (settings.video.max_fps = fps || null)}
+            ariaLabel={t(locale, "batch.settings.maxFps")}
+          />
+        </div>
 
-        <label class="field-label">
+        <div class="field-label narrow">
           {t(locale, "batch.settings.audio")}
-          <select bind:value={settings.video.audio}>
-            <option value="aac">{t(locale, "batch.settings.audioAac")}</option>
-            <option value="copy">{t(locale, "batch.settings.audioCopy")}</option>
-            <option value="drop">{t(locale, "batch.settings.audioDrop")}</option>
-          </select>
-        </label>
+          <Select
+            value={settings.video.audio}
+            options={audioOptions}
+            onchange={(audio) => (settings.video.audio = audio)}
+            ariaLabel={t(locale, "batch.settings.audio")}
+          />
+        </div>
 
         {#if settings.video.audio === "aac"}
           <label class="field-label">
@@ -224,34 +291,28 @@
         {/if}
       {/if}
 
-      <label class="checkbox-row">
-        <input type="checkbox" bind:checked={settings.video.faststart} />
-        <span>{t(locale, "batch.settings.faststart")}</span>
-      </label>
-
-      <label class="checkbox-row">
-        <input type="checkbox" bind:checked={settings.video.keep_metadata} />
-        <span>{t(locale, "batch.settings.keepMetadata")}</span>
-      </label>
+      <Switch
+        bind:checked={settings.video.faststart}
+        label={t(locale, "batch.settings.faststart")}
+      />
+      <Switch
+        bind:checked={settings.video.keep_metadata}
+        label={t(locale, "batch.settings.keepMetadata")}
+      />
     </div>
   {/if}
 
   {#if hasImages && (tab === "image" || !hasVideos)}
     <div class="options-grid">
-      <label class="field-label">
+      <div class="field-label narrow">
         {t(locale, "batch.settings.format")}
-        <select bind:value={settings.image.format}>
-          <option value="jpeg">{t(locale, "batch.settings.formatJpeg")}</option>
-          {#if capabilities.webp}
-            <option value="webp">{t(locale, "batch.settings.formatWebp")}</option>
-          {/if}
-          {#if capabilities.avif}
-            <option value="avif">{t(locale, "batch.settings.formatAvif")}</option>
-          {/if}
-          <option value="png">{t(locale, "batch.settings.formatPng")}</option>
-          <option value="keep">{t(locale, "batch.settings.formatKeep")}</option>
-        </select>
-      </label>
+        <Select
+          value={settings.image.format}
+          options={formatOptions}
+          onchange={(imageFormat) => (settings.image.format = imageFormat)}
+          ariaLabel={t(locale, "batch.settings.format")}
+        />
+      </div>
 
       {#if settings.image.format !== "png"}
         <label class="field-label">
@@ -260,30 +321,26 @@
         </label>
       {/if}
 
-      <label class="field-label">
+      <div class="field-label narrow">
         {t(locale, "batch.settings.maxEdge")}
-        <select
-          value={settings.image.max_edge ?? ""}
-          onchange={(event) =>
-            (settings.image.max_edge = numberOrNull(event.currentTarget.value))}
-        >
-          <option value="">{t(locale, "batch.settings.keepSize")}</option>
-          <option value="1920">1920</option>
-          <option value="2560">2560</option>
-          <option value="3840">3840</option>
-        </select>
-      </label>
+        <Select
+          value={settings.image.max_edge ?? 0}
+          options={edgeOptions}
+          onchange={(edge) => (settings.image.max_edge = edge || null)}
+          ariaLabel={t(locale, "batch.settings.maxEdge")}
+        />
+      </div>
 
-      <label class="checkbox-row">
-        <input type="checkbox" bind:checked={settings.image.keep_metadata} />
-        <span>{t(locale, "batch.settings.keepMetadata")}</span>
-      </label>
+      <Switch
+        bind:checked={settings.image.keep_metadata}
+        label={t(locale, "batch.settings.keepMetadata")}
+      />
     </div>
   {/if}
 
   <h3 class="batch-section-title">{t(locale, "batch.settings.outputTitle")}</h3>
   <div class="options-grid">
-    <label class="checkbox-row">
+    <label class="radio-row">
       <input
         type="radio"
         name="batch-output"
@@ -293,7 +350,7 @@
       <span>{t(locale, "batch.settings.outputSubfolder")}</span>
     </label>
     {#if outputMode === "subfolder"}
-      <label class="field-label indented">
+      <label class="field-label narrow indented">
         {t(locale, "batch.settings.subfolderName")}
         <input
           type="text"
@@ -303,7 +360,7 @@
       </label>
     {/if}
 
-    <label class="checkbox-row">
+    <label class="radio-row">
       <input
         type="radio"
         name="batch-output"
@@ -323,7 +380,7 @@
       </div>
     {/if}
 
-    <label class="checkbox-row danger-option">
+    <label class="radio-row danger-option">
       <input
         type="radio"
         name="batch-output"
@@ -333,7 +390,7 @@
       <span>{t(locale, "batch.settings.outputReplace")}</span>
     </label>
 
-    <label class="field-label">
+    <label class="field-label narrow">
       {t(locale, "batch.settings.suffix")}
       <input
         type="text"
@@ -342,19 +399,20 @@
       />
     </label>
 
-    <label class="field-label">
+    <div class="field-label narrow">
       {t(locale, "batch.settings.conflict")}
-      <select bind:value={settings.on_conflict}>
-        <option value="rename">{t(locale, "batch.settings.conflictRename")}</option>
-        <option value="skip">{t(locale, "batch.settings.conflictSkip")}</option>
-        <option value="overwrite">{t(locale, "batch.settings.conflictOverwrite")}</option>
-      </select>
-    </label>
+      <Select
+        value={settings.on_conflict}
+        options={conflictOptions}
+        onchange={(policy) => (settings.on_conflict = policy)}
+        ariaLabel={t(locale, "batch.settings.conflict")}
+      />
+    </div>
 
-    <label class="checkbox-row">
-      <input type="checkbox" bind:checked={settings.skip_if_larger} />
-      <span>{t(locale, "batch.settings.skipIfLarger")}</span>
-    </label>
+    <Switch
+      bind:checked={settings.skip_if_larger}
+      label={t(locale, "batch.settings.skipIfLarger")}
+    />
 
     <label class="field-label">
       {t(locale, "batch.settings.minSavings")}
@@ -373,9 +431,9 @@
       <input type="number" min="1" max="8" bind:value={settings.concurrency} />
     </label>
 
-    <label class="checkbox-row">
-      <input type="checkbox" bind:checked={settings.preserve_timestamps} />
-      <span>{t(locale, "batch.settings.preserveTimestamps")}</span>
-    </label>
+    <Switch
+      bind:checked={settings.preserve_timestamps}
+      label={t(locale, "batch.settings.preserveTimestamps")}
+    />
   </div>
 </div>

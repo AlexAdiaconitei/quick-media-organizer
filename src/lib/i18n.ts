@@ -46,8 +46,10 @@ const messages = {
       tabRename: "Rename",
       tabOptimize: "Optimize",
       optimizeFile: "Optimize this file…",
+      optimizeNow: "Optimize now",
+      advanced: "Advanced options…",
       optimizeFileHint:
-        "Opens the batch panel with only this file, and writes the converted copy wherever you choose. The original is untouched.",
+        "Writes the converted copy into _optimized/ next to the file. The original is untouched.",
     },
     renamed: "Renamed",
     trashed: "Moved to _deleted",
@@ -331,8 +333,10 @@ const messages = {
       tabRename: "Renombrar",
       tabOptimize: "Optimizar",
       optimizeFile: "Optimizar este archivo…",
+      optimizeNow: "Optimizar ahora",
+      advanced: "Opciones avanzadas…",
       optimizeFileHint:
-        "Abre el panel de lote solo con este archivo y escribe la copia convertida donde elijas. El original no se toca.",
+        "Escribe la copia convertida en _optimized/ junto al archivo. El original no se toca.",
     },
     renamed: "Renombrado",
     trashed: "Movido a _deleted",

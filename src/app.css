@@ -620,7 +620,14 @@ button:disabled {
 
 .toolbar-actions {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
+}
+
+.locale-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 .locale-switch button {
@@ -1731,4 +1738,262 @@ input[type="range"]:disabled {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--text);
+}
+
+/* --- Switch ------------------------------------------------------------- */
+
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.switch-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.switch-label {
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.switch {
+  flex: none;
+  width: 38px;
+  height: 22px;
+  margin-top: 1px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.switch:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.switch.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.switch-knob {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--muted);
+  transform: translateX(0);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.switch.on .switch-knob {
+  background: var(--bg);
+  transform: translateX(16px);
+}
+
+/* --- Select ------------------------------------------------------------- */
+
+.select {
+  position: relative;
+  width: 100%;
+}
+
+.select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.select-trigger:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.select-trigger.open,
+.select-trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-chevron {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-bottom: 3px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.select-trigger.open .select-chevron {
+  transform: rotate(-135deg);
+  margin-bottom: -3px;
+}
+
+.select-list {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+}
+
+.select-list li button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-align: left;
+}
+
+.select-list li.highlighted button {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.select-list li.selected button {
+  color: var(--text);
+}
+
+/* The app's diamond mark doubles as the "chosen" tick. */
+.select-check {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  transform: rotate(45deg);
+  border: 1px solid transparent;
+}
+
+.select-list li.selected .select-check {
+  background: var(--accent);
+}
+
+/* --- Radio as the app's diamond mark ------------------------------------ */
+
+.radio-row input[type="radio"],
+.checkbox-row input[type="radio"] {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 2px;
+  background: transparent;
+  transform: rotate(45deg);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.radio-row input[type="radio"]:hover,
+.checkbox-row input[type="radio"]:hover {
+  border-color: var(--accent);
+}
+
+.radio-row input[type="radio"]:checked,
+.checkbox-row input[type="radio"]:checked {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--accent);
+}
+
+.radio-row input[type="radio"]:focus-visible,
+.checkbox-row input[type="radio"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* --- Field widths -------------------------------------------------------
+   Numbers and short names do not need the full panel width. */
+
+.field-label input[type="number"] {
+  max-width: 8rem;
+}
+
+.field-label.narrow input[type="text"],
+.field-label.narrow .select {
+  max-width: 16rem;
+}
+
+/* --- Quick optimize (side panel) ---------------------------------------- */
+
+.quick-optimize {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.quick-preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.quick-preset {
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.quick-preset:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.quick-preset.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.quick-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* A switch inside a row of buttons should not stretch to fill it. */
+.batch-sources .switch-row {
+  flex: none;
+  gap: 0.5rem;
 }

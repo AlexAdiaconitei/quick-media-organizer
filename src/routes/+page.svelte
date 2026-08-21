@@ -4,6 +4,7 @@
   import FolderPicker from "$lib/components/FolderPicker.svelte";
   import HelpOverlay from "$lib/components/HelpOverlay.svelte";
   import MetadataPanel from "$lib/components/MetadataPanel.svelte";
+  import QuickOptimize from "$lib/components/QuickOptimize.svelte";
   import OptionsPanel from "$lib/components/OptionsPanel.svelte";
   import PhotoViewer from "$lib/components/PhotoViewer.svelte";
   import RenameInput from "$lib/components/RenameInput.svelte";
@@ -18,6 +19,7 @@
     invokeLogged,
     reportError,
   } from "$lib/errorReporter";
+  import { defaultBatchSettings, matchingPreset, builtInPresets } from "$lib/batch";
   import { detectLocale, format, t, type Locale } from "$lib/i18n";
   import {
     buildScreenshotVideoWorkspaceState,
@@ -29,6 +31,7 @@
   import type {
     ActionResult,
     AppSettings,
+    BatchSettings,
     FrontendState,
     LayoutMode,
     MediaItem,
@@ -47,7 +50,14 @@
   let showOptions = $state(false);
   let showBatch = $state(false);
   let batchInitialItems = $state<MediaItem[] | null>(null);
+  let batchAutoStart = $state(false);
   let panelTab = $state<"rename" | "optimize">("rename");
+  /// Settings for the quick picker in the Optimize tab, handed to the batch
+  /// panel when the user runs it or opens the advanced view.
+  let quickSettings = $state<BatchSettings>(defaultBatchSettings());
+  const quickPresetId = $derived(
+    matchingPreset(builtInPresets(locale), quickSettings)?.id ?? null,
+  );
   let showHelp = $state(false);
   let folderQuery = $state("");
   let folderSelection = $state<string | null>(null);
@@ -261,12 +271,16 @@
 
   function openBatchPanel() {
     batchInitialItems = null;
+    batchAutoStart = false;
     showBatch = true;
   }
 
-  /// "Optimize this file" seeds the batch panel with the current item only.
-  function openBatchForCurrentItem() {
-    batchInitialItems = appState.item ? [appState.item] : null;
+  /// "Advanced options" hands the current file and the quick settings over to
+  /// the full panel.
+  function openBatchForCurrentItem(autoStart = false) {
+    if (!appState.item) return;
+    batchInitialItems = [appState.item];
+    batchAutoStart = autoStart;
     showBatch = true;
   }
 
@@ -889,6 +903,7 @@
               compact={sidebarLayout}
               pendingTrim={pendingVideoTrim}
             />
+            <MetadataPanel {locale} item={appState.item} bind:visible={showMetadata} />
             {#if appState.item?.is_video}
               <VideoTrimPanel
                 bind:this={trimPanel}
@@ -904,24 +919,17 @@
           </div>
 
           <div class="panel-tab-body" class:hidden={panelTab !== "optimize"}>
-            <div class="optimize-file">
-              <button
-                type="button"
-                class="ghost-btn"
-                disabled={!appState.item}
-                onclick={openBatchForCurrentItem}
-              >
-                {t(locale, "sidePanel.optimizeFile")}
-              </button>
-              <small class="option-hint">{t(locale, "sidePanel.optimizeFileHint")}</small>
-            </div>
+            <QuickOptimize
+              {locale}
+              item={appState.item}
+              bind:settings={quickSettings}
+              activePresetId={quickPresetId}
+              disabled={actionInFlight}
+              onOptimize={() => openBatchForCurrentItem(true)}
+              onAdvanced={() => openBatchForCurrentItem(false)}
+            />
           </div>
 
-          <MetadataPanel
-            {locale}
-            item={appState.item}
-            bind:visible={showMetadata}
-          />
         </div>
         {#if sidebarLayout}
           {@render shortcutBar(true)}
@@ -1010,9 +1018,12 @@
   open={showBatch}
   hasQueue={batchQueueAvailable}
   initialItems={batchInitialItems}
+  initialSettings={batchInitialItems ? quickSettings : null}
+  autoStart={batchAutoStart}
   onClose={() => {
     showBatch = false;
     batchInitialItems = null;
+    batchAutoStart = false;
     focusRenameInput();
   }}
   onSessionChanged={(state) => {

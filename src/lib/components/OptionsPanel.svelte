@@ -1,5 +1,7 @@
 <script lang="ts">
+  import Select from "./Select.svelte";
   import SupportBlock from "./SupportBlock.svelte";
+  import Switch from "./Switch.svelte";
   import { t, type Locale } from "../i18n";
   import type { RenameMode, SortMode, LayoutMode } from "../types";
 
@@ -28,6 +30,22 @@
     onClose: () => void;
     onLocaleChange: (locale: Locale) => void;
   } = $props();
+
+  const sortOptions = $derived([
+    { value: "exif_date" as SortMode, label: t(locale, "options.sortExif") },
+    { value: "file_name" as SortMode, label: t(locale, "options.sortName") },
+    { value: "modified_date" as SortMode, label: t(locale, "options.sortModified") },
+  ]);
+
+  const renameOptions = $derived([
+    { value: "free" as RenameMode, label: t(locale, "options.renameFree") },
+    { value: "prefix_counter" as RenameMode, label: t(locale, "options.renamePrefix") },
+  ]);
+
+  const layoutOptions = $derived([
+    { value: "sidebar" as LayoutMode, label: t(locale, "options.layoutSidebar") },
+    { value: "bottom" as LayoutMode, label: t(locale, "options.layoutBottom") },
+  ]);
 </script>
 
 {#if open}
@@ -46,46 +64,47 @@
     >
       <h2>{t(locale, "options.title")}</h2>
       <div class="options-grid">
-        <label class="field-label">
+        <div class="field-label">
           {t(locale, "options.sort")}
-          <select bind:value={sortMode}>
-            <option value="exif_date">{t(locale, "options.sortExif")}</option>
-            <option value="file_name">{t(locale, "options.sortName")}</option>
-            <option value="modified_date">{t(locale, "options.sortModified")}</option>
-          </select>
-        </label>
+          <Select
+            value={sortMode}
+            options={sortOptions}
+            onchange={(mode) => (sortMode = mode)}
+            ariaLabel={t(locale, "options.sort")}
+          />
+        </div>
 
-        <label class="checkbox-row">
-          <input type="checkbox" bind:checked={scanRecursive} />
-          <span>
-            {t(locale, "options.recursive")}
-            <small class="option-hint">{t(locale, "options.recursiveHint")}</small>
-          </span>
-        </label>
+        <Switch
+          bind:checked={scanRecursive}
+          label={t(locale, "options.recursive")}
+          hint={t(locale, "options.recursiveHint")}
+        />
 
-        <label class="checkbox-row">
-          <input type="checkbox" bind:checked={videoWithSound} />
-          <span>
-            {t(locale, "options.videoSound")}
-            <small class="option-hint">{t(locale, "options.videoSoundHint")}</small>
-          </span>
-        </label>
+        <Switch
+          bind:checked={videoWithSound}
+          label={t(locale, "options.videoSound")}
+          hint={t(locale, "options.videoSoundHint")}
+        />
 
-        <label class="field-label">
+        <div class="field-label">
           {t(locale, "options.renameMode")}
-          <select bind:value={renameMode}>
-            <option value="free">{t(locale, "options.renameFree")}</option>
-            <option value="prefix_counter">{t(locale, "options.renamePrefix")}</option>
-          </select>
-        </label>
+          <Select
+            value={renameMode}
+            options={renameOptions}
+            onchange={(mode) => (renameMode = mode)}
+            ariaLabel={t(locale, "options.renameMode")}
+          />
+        </div>
 
-        <label class="field-label">
+        <div class="field-label">
           {t(locale, "options.layout")}
-          <select bind:value={layoutMode}>
-            <option value="sidebar">{t(locale, "options.layoutSidebar")}</option>
-            <option value="bottom">{t(locale, "options.layoutBottom")}</option>
-          </select>
-        </label>
+          <Select
+            value={layoutMode}
+            options={layoutOptions}
+            onchange={(mode) => (layoutMode = mode)}
+            ariaLabel={t(locale, "options.layout")}
+          />
+        </div>
 
         <div class="field-label">
           {t(locale, "options.language")}
