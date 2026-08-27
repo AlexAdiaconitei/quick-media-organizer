@@ -553,6 +553,15 @@ fn finalize_output<E: MediaEncoder>(
         return Err("Converted file is empty.".into());
     }
 
+    // ffmpeg writes no EXIF for stills, so the block is carried over by hand.
+    // Done before the size rules so the saving reported to the user counts it,
+    // and never fatal: losing the tags is not worth losing the conversion.
+    if plan.media_type == BatchMediaType::Image && settings.image.keep_metadata {
+        if let Err(error) = crate::metadata::copy_exif(&plan.input, &plan.temp_output) {
+            eprintln!("[QMO][batch] could not carry EXIF over: {error}");
+        }
+    }
+
     if plan.media_type == BatchMediaType::Video && encoder.probe_duration(&plan.temp_output).is_none()
     {
         let _ = fs::remove_file(&plan.temp_output);

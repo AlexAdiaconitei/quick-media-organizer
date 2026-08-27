@@ -5,6 +5,7 @@ import type {
   BatchPreset,
   BatchSettings,
   FfmpegCapabilities,
+  ImageFormat,
   MediaItem,
 } from "./types";
 
@@ -214,4 +215,26 @@ export async function cancelJob(jobId: string): Promise<void> {
 
 export async function activeJob(): Promise<BatchJobStatus | null> {
   return invokeLogged<BatchJobStatus | null>("get_active_batch_job");
+}
+
+/// How much of the source's EXIF survives a conversion to `format`.
+///
+/// ffmpeg writes none itself; the backend splices the block back in for the
+/// containers it can rewrite (see `can_carry_exif` in
+/// `src-tauri/src/metadata.rs`). This mirrors that list so the settings form
+/// never promises what the conversion cannot deliver.
+export type MetadataFate = "kept" | "dropped" | "depends-on-source";
+
+export function metadataFate(format: ImageFormat): MetadataFate {
+  switch (format) {
+    case "jpeg":
+    case "webp":
+    case "png":
+      return "kept";
+    case "avif":
+      return "dropped";
+    // "Keep the source format" lands on whatever the file already was.
+    case "keep":
+      return "depends-on-source";
+  }
 }

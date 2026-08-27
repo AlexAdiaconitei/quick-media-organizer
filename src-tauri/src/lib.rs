@@ -8,6 +8,7 @@ mod commands;
 mod error_log;
 mod fs_util;
 mod media;
+mod metadata;
 mod models;
 mod path_util;
 mod rename;

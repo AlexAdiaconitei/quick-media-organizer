@@ -36,7 +36,9 @@ If it saves you time, I'd genuinely appreciate a [coffee ☕](https://buymeacoff
 - **Delete safely** to `_deleted/` inside your folder — never permanent, always undoable
 - **Skip**, **navigate**, and **undo** without touching the mouse
 - **Live Photos** (`.heic` + `.mov`) move, rename, and delete together
-- Original **EXIF dates** and file timestamps are preserved
+- Original **EXIF dates** and file timestamps are preserved — including
+  through batch conversion, where the EXIF block is carried into the JPEG,
+  PNG or WebP that comes out
 - **Updates itself** from this repository's releases, with the release notes
   shown before you install
 
@@ -107,7 +109,10 @@ Shortcuts stay **always visible** in the bottom bar.
 No. Files go to `_deleted/` inside your media folder. Review them anytime.
 
 **Will organizing change capture dates?**  
-No. EXIF metadata and original timestamps are preserved.
+No. Renaming and moving never touch the file's contents. Batch conversion
+re-encodes the image, so the EXIF block is copied across explicitly — that
+works for JPEG, PNG and WebP output. AVIF has nowhere to put it, and the
+settings panel says so before you start.
 
 **Videos and Live Photos?**  
 Yes. Videos preview in-app and can be trimmed losslessly. Live Photo pairs stay in sync.

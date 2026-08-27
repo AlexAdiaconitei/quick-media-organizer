@@ -2,6 +2,7 @@
   import Select from "./Select.svelte";
   import Switch from "./Switch.svelte";
   import { format, t, type Locale } from "../i18n";
+  import { metadataFate } from "../batch";
   import type {
     AudioMode,
     BatchPreset,
@@ -47,6 +48,8 @@
   let presetName = $state("");
 
   const outputMode = $derived(settings.output.mode);
+  /// Whether the chosen image format can carry the source EXIF over.
+  const imageMetadataFate = $derived(metadataFate(settings.image.format));
   const customFolder = $derived(
     settings.output.mode === "custom_folder" ? settings.output.path : "",
   );
@@ -335,6 +338,16 @@
         bind:checked={settings.image.keep_metadata}
         label={t(locale, "batch.settings.keepMetadata")}
       />
+      {#if settings.image.keep_metadata && imageMetadataFate !== "kept"}
+        <small class="option-hint">
+          {t(
+            locale,
+            imageMetadataFate === "dropped"
+              ? "batch.settings.metadataDropped"
+              : "batch.settings.metadataDependsOnSource",
+          )}
+        </small>
+      {/if}
     </div>
   {/if}
 

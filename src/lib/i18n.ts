@@ -37,6 +37,21 @@ const messages = {
     sessionResumeContinue: "Continue here",
     subfolderMediaNotice:
       "{count} more photos/videos are in subfolders. Enable “Include subfolders” in Options (Ctrl+O) to review them.",
+    /// Rendered from ActionResult.message_key: the backend names the message,
+    /// never the wording.
+    action: {
+      renamed: "Renamed",
+      renamedAdjusted: "Renamed (adjusted to “{name}”)",
+      savedToFolder: "Saved to folder",
+      trashed: "Moved to _deleted (not system Trash). Press Undo to restore.",
+      undone: "Undone",
+      trimmed: "Video trimmed losslessly (no re-encoding)",
+      notAVideo: "Current item is not a video.",
+      trimTooShort: "Trim range is too short. Move the start/end markers apart.",
+      trimNothing: "Nothing to trim — the full video is selected.",
+      undoUnavailable: "This action can no longer be undone.",
+      undoHistoryTrimmed: "(Older undo history was trimmed.)",
+    },
     common: {
       ok: "OK",
       cancel: "Cancel",
@@ -152,7 +167,8 @@ const messages = {
     trim: {
       title: "Trim video",
       lossless: "Lossless",
-      ffmpegMissing: "Install FFmpeg to trim videos (brew install ffmpeg). No quality is lost — streams are copied, not re-encoded.",
+      ffmpegMissing:
+        "Install FFmpeg to trim videos ({command}). No quality is lost — streams are copied, not re-encoded.",
       start: "Start",
       end: "End",
       kept: "Keeping {duration}",
@@ -224,6 +240,10 @@ const messages = {
         audioBitrate: "Audio bitrate (kbps)",
         faststart: "Optimize for streaming (faststart)",
         keepMetadata: "Keep metadata (dates, GPS)",
+        metadataDropped:
+          "AVIF cannot store EXIF here, so the capture date and GPS will be lost.",
+        metadataDependsOnSource:
+          "Kept for JPEG, PNG and WebP. GIF, BMP and TIFF cannot store EXIF, so those lose the capture date and GPS.",
         format: "Convert to",
         formatJpeg: "JPEG",
         formatWebp: "WebP",
@@ -339,6 +359,20 @@ const messages = {
     sessionResumeContinue: "Continuar aquí",
     subfolderMediaNotice:
       "Hay {count} fotos/vídeos más en subcarpetas. Activa «Incluir subcarpetas» en Opciones (Ctrl+O) para revisarlos.",
+    action: {
+      renamed: "Renombrado",
+      renamedAdjusted: "Renombrado (ajustado a «{name}»)",
+      savedToFolder: "Guardado en la carpeta",
+      trashed:
+        "Movido a _deleted (no a la Papelera del sistema). Pulsa Deshacer para restaurarlo.",
+      undone: "Deshecho",
+      trimmed: "Vídeo recortado sin pérdida (sin recodificar)",
+      notAVideo: "El archivo actual no es un vídeo.",
+      trimTooShort: "El recorte es demasiado corto. Separa los marcadores de inicio y fin.",
+      trimNothing: "No hay nada que recortar: está seleccionado el vídeo entero.",
+      undoUnavailable: "Esta acción ya no se puede deshacer.",
+      undoHistoryTrimmed: "(Se ha recortado el historial de deshacer más antiguo.)",
+    },
     common: {
       ok: "OK",
       cancel: "Cancelar",
@@ -526,6 +560,10 @@ const messages = {
         audioBitrate: "Bitrate de audio (kbps)",
         faststart: "Optimizar para reproducción (faststart)",
         keepMetadata: "Conservar metadatos (fechas, GPS)",
+        metadataDropped:
+          "AVIF no puede guardar EXIF aquí, así que se perderán la fecha de captura y el GPS.",
+        metadataDependsOnSource:
+          "Se conservan en JPEG, PNG y WebP. GIF, BMP y TIFF no pueden guardar EXIF, así que ahí se pierden la fecha de captura y el GPS.",
         format: "Convertir a",
         formatJpeg: "JPEG",
         formatWebp: "WebP",
@@ -628,9 +666,25 @@ export function format(
 ): string {
   let text = t(locale, key);
   for (const [name, val] of Object.entries(vars)) {
-    text = text.replace(`{${name}}`, String(val));
+    text = text.split(`{${name}}`).join(String(val));
   }
   return text;
+}
+
+/// Renders a message named by the backend. An unknown key falls back to the
+/// key itself rather than throwing, so a newer backend cannot blank the toast.
+export function translate(
+  locale: Locale,
+  key: string,
+  vars: Record<string, string | number> = {},
+): string {
+  return Object.keys(vars).length > 0 ? format(locale, key, vars) : t(locale, key);
+}
+
+/// True for a locale this build actually ships, so a settings file written by
+/// a newer version cannot leave the UI untranslated.
+export function isLocale(value: string | null | undefined): value is Locale {
+  return value === "en" || value === "es";
 }
 
 export function detectLocale(): Locale {

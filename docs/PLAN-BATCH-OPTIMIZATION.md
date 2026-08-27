@@ -23,9 +23,16 @@ Añadido sobre el plan, tras revisar el flujo real "carpeta entera → carpeta n
   (`.heic` + `.mov`) se convierte entera y no se descabala.
 
 Pendiente: fase 3 completa (aceleración por hardware, estimación previa,
-informe del job en disco, reanudar job) y el QA manual de §10 — la máquina de
-desarrollo no tiene ffmpeg instalado, así que **las cadenas de argumentos no se
-han ejecutado todavía contra un binario real**.
+informe del job en disco, reanudar job) y el QA manual de §10.
+
+Las cadenas de argumentos **sí** se ejecutan contra un binario real:
+`batch/ffmpeg_smoke.rs` codifica clips e imágenes de prueba con el ffmpeg que
+encuentre, y CI lo instala en Linux y Windows. Los tests se saltan solos cuando
+no hay ffmpeg, así que un checkout sin él sigue en verde.
+
+Añadido después: ffmpeg no escribe EXIF al codificar imágenes, así que el
+bloque se copia del original al convertido en `src-tauri/src/metadata.rs`
+(JPEG/PNG/WebP; AVIF no puede y la UI lo avisa).
 
 ## 1. Objetivo
 

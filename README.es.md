@@ -36,7 +36,8 @@ Si te ahorra tiempo, te agradecería de corazón un [café ☕](https://buymeaco
 - **Eliminar con seguridad** a `_deleted/` dentro de tu carpeta — nunca permanente, siempre deshacer
 - **Saltar**, **navegar** y **deshacer** sin ratón
 - **Live Photos** (`.heic` + `.mov`) se mueven, renombran y eliminan juntos
-- Se conservan las fechas **EXIF** y los timestamps originales
+- Se conservan las fechas **EXIF** y los timestamps originales — también al
+  convertir en lote: el bloque EXIF se copia al JPEG, PNG o WebP resultante
 - **Se actualiza sola** desde las releases de este repositorio, enseñando las
   notas antes de instalar
 
@@ -107,7 +108,10 @@ Los atajos están **siempre visibles** en la barra inferior.
 No. Los archivos van a `_deleted/` dentro de tu carpeta.
 
 **¿Pierdo la fecha de captura?**  
-No. Se conserva EXIF y timestamps.
+No. Renombrar y mover no tocan el contenido del archivo. La conversión en lote
+sí recodifica, así que el bloque EXIF se copia a mano: funciona con salida
+JPEG, PNG y WebP. AVIF no tiene dónde guardarlo, y el panel de ajustes lo
+avisa antes de empezar.
 
 **¿Vídeos y Live Photos?**  
 Sí. Los vídeos se previsualizan y recortan sin re-codificar. Los pares Live Photo van juntos.
