@@ -56,6 +56,10 @@ jobs:
       - name: Frontend tests
         run: pnpm test
 
+      - name: Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
       - name: Rust lints
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings

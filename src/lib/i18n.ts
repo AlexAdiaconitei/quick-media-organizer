@@ -298,8 +298,13 @@ const messages = {
         noSavings: "No space saved.",
         openOutput: "Open output folder",
         failures: "Problems",
+        copyFailures: "Copy problem details",
+        failuresCopied: "Copied",
         cancelledNotice: "Cancelled. Files already converted were kept.",
         backgroundNotice: "The job keeps running in the background if you close this panel.",
+        closeWarning:
+          "The batch is still running. Close the panel and leave it running in the background?",
+        closeAnyway: "Run in background",
         noSelection: "Select at least one file.",
       },
       replaceConfirm: {
@@ -618,8 +623,13 @@ const messages = {
         noSavings: "No se ha ahorrado espacio.",
         openOutput: "Abrir carpeta de salida",
         failures: "Problemas",
+        copyFailures: "Copiar detalles de los problemas",
+        failuresCopied: "Copiado",
         cancelledNotice: "Cancelado. Los archivos ya convertidos se han conservado.",
         backgroundNotice: "Si cierras este panel el lote sigue en segundo plano.",
+        closeWarning:
+          "El lote sigue en marcha. ¿Cerrar el panel y dejarlo ejecutándose en segundo plano?",
+        closeAnyway: "Seguir en segundo plano",
         noSelection: "Selecciona al menos un archivo.",
       },
       replaceConfirm: {

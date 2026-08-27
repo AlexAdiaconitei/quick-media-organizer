@@ -97,8 +97,8 @@ pub fn scan_folder(root: &Path, recursive: bool) -> Result<Vec<MediaItem>, Strin
     } else {
         // Reported rather than swallowed: an unreadable folder must not look
         // like an empty one.
-        let entries = fs::read_dir(root)
-            .map_err(|e| format!("Cannot read {}: {e}", root.display()))?;
+        let entries =
+            fs::read_dir(root).map_err(|e| format!("Cannot read {}: {e}", root.display()))?;
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
             if path.is_file() && is_supported_file(&path) {
@@ -348,7 +348,10 @@ fn build_media_item_fast(paths: &[PathBuf], kind: MediaKind) -> MediaItem {
 
     MediaItem {
         id: primary.to_string_lossy().to_string(),
-        paths: paths.iter().map(|p| p.to_string_lossy().to_string()).collect(),
+        paths: paths
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect(),
         file_name,
         extension: extension.clone(),
         exif_date: None,
@@ -382,7 +385,8 @@ fn read_exif_fields(path: &Path) -> ExifFields {
     let mut height = None;
 
     if let Ok(file) = fs::File::open(path) {
-        if let Ok(exif) = exif::Reader::new().read_from_container(&mut std::io::BufReader::new(file))
+        if let Ok(exif) =
+            exif::Reader::new().read_from_container(&mut std::io::BufReader::new(file))
         {
             if let Some(field) = exif.get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY) {
                 exif_date = Some(field.display_value().to_string());
@@ -453,10 +457,7 @@ mod tests {
         let items = group_live_photos(&files);
 
         assert_eq!(items.len(), 2);
-        let primaries: Vec<_> = items
-            .iter()
-            .map(|item| item.paths[0].clone())
-            .collect();
+        let primaries: Vec<_> = items.iter().map(|item| item.paths[0].clone()).collect();
         assert!(primaries.iter().any(|path| path.ends_with("photo.jpg")));
         assert!(primaries.iter().any(|path| path.ends_with("photo (1).jpg")));
     }

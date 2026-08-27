@@ -54,7 +54,11 @@ pub fn rollback_moves(moves: &[(PathBuf, PathBuf)]) {
     }
 }
 
-pub fn execute_moves(sources: &[PathBuf], dest_names: &[String], dest_dir: &Path) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+pub fn execute_moves(
+    sources: &[PathBuf],
+    dest_names: &[String],
+    dest_dir: &Path,
+) -> Result<Vec<(PathBuf, PathBuf)>, String> {
     if sources.len() != dest_names.len() {
         return Err("Internal error: source/destination count mismatch.".into());
     }

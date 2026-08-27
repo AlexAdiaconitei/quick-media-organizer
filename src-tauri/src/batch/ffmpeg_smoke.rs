@@ -184,7 +184,10 @@ fn ffmpeg_accepts_the_video_flags_and_downscales() {
     assert_eq!(dimensions(&output), (854, 480));
     let encoder = FfmpegEncoder::locate().unwrap();
     let duration = encoder.probe_duration(&output).unwrap();
-    assert!((duration - 2.0).abs() < 0.4, "unexpected duration {duration}");
+    assert!(
+        (duration - 2.0).abs() < 0.4,
+        "unexpected duration {duration}"
+    );
 }
 
 #[test]
@@ -204,9 +207,10 @@ fn ffmpeg_accepts_stream_copy_remux() {
     let job = run(vec![source.to_string_lossy().to_string()], settings);
 
     assert_eq!(job.failed, 0, "remux failed: {:?}", job.items[0].error);
-    assert_eq!(dimensions(&PathBuf::from(
-        job.items[0].output_path.clone().unwrap()
-    )), (1280, 720));
+    assert_eq!(
+        dimensions(&PathBuf::from(job.items[0].output_path.clone().unwrap())),
+        (1280, 720)
+    );
 }
 
 #[test]
@@ -220,10 +224,7 @@ fn ffmpeg_accepts_the_image_flags_and_resizes_the_long_edge() {
     let source = dir.path().join("photo.png");
     make_image(&source);
 
-    for (format, expected_ext) in [
-        (ImageFormat::Jpeg, "jpg"),
-        (ImageFormat::Webp, "webp"),
-    ] {
+    for (format, expected_ext) in [(ImageFormat::Jpeg, "jpg"), (ImageFormat::Webp, "webp")] {
         let mut settings = lenient(OutputMode::CustomFolder {
             path: dir.path().join(expected_ext).to_string_lossy().to_string(),
         });

@@ -1,6 +1,6 @@
 # Plan de implementación — Modo Lote (optimización/conversión masiva)
 
-Estado: **fases 1 y 2 implementadas** (2026-08-20). Plan original: 2026-08-17.
+Estado: **fases 1 y 2 implementadas; fase 3 parcial** (2026-08-27). Plan original: 2026-08-17.
 
 ## 0. Estado de implementación
 
@@ -8,7 +8,7 @@ Implementado: `src-tauri/src/batch/` (`mod.rs`, `ffmpeg_args.rs`, `runner.rs`),
 `FfmpegTools::encode` con progreso y cancelación, 16 comandos Tauri,
 `UndoAction::ConvertMedia`, presets persistidos, y la UI completa
 (`BatchPanel`, `BatchSelectGrid`, `BatchSettingsForm`, `BatchProgress`,
-`BatchReplaceConfirmDialog`) con atajo Ctrl/⌘+B. 29 tests en `cargo test`.
+`BatchReplaceConfirmDialog`) con atajo Ctrl/⌘+B. 48 tests en `cargo test`.
 
 Añadido sobre el plan, tras revisar el flujo real "carpeta entera → carpeta nueva":
 
@@ -22,8 +22,10 @@ Añadido sobre el plan, tras revisar el flujo real "carpeta entera → carpeta n
 - La selección expande todos los paths del `MediaItem`, así una Live Photo
   (`.heic` + `.mov`) se convierte entera y no se descabala.
 
-Pendiente: fase 3 completa (aceleración por hardware, estimación previa,
-informe del job en disco, reanudar job) y el QA manual de §10.
+Fase 3 implementada en parte: AV1, informes `.md`/`.csv` por job y reenganche
+tras recargar la ventana. Pendiente: aceleración por hardware, estimación
+previa, reanudación después de cerrar por completo la aplicación, captura de
+documentación y el QA manual de §10.
 
 Las cadenas de argumentos **sí** se ejecutan contra un binario real:
 `batch/ffmpeg_smoke.rs` codifica clips e imágenes de prueba con el ffmpeg que

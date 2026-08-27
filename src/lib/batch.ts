@@ -2,6 +2,7 @@ import { invokeLogged } from "./errorReporter";
 import { t, type Locale } from "./i18n";
 import type {
   BatchJobStatus,
+  BatchItemStatus,
   BatchPreset,
   BatchSettings,
   FfmpegCapabilities,
@@ -215,6 +216,19 @@ export async function cancelJob(jobId: string): Promise<void> {
 
 export async function activeJob(): Promise<BatchJobStatus | null> {
   return invokeLogged<BatchJobStatus | null>("get_active_batch_job");
+}
+
+/// A completion event can be missed while the webview is closed or reloading.
+/// Reattaching must run the same finalization path as the live event so undo
+/// state and the open queue stay in sync.
+export function shouldFinalizeRecoveredJob(job: BatchJobStatus): boolean {
+  return !job.running && !job.finalized;
+}
+
+export function formatFailureReport(items: BatchItemStatus[]): string {
+  return items
+    .map((item) => [item.file_name, item.source_path, item.error ?? "Unknown error"].join("\n"))
+    .join("\n\n");
 }
 
 /// How much of the source's EXIF survives a conversion to `format`.

@@ -68,6 +68,7 @@
   let showFolderPicker = $state(false);
   let showOptions = $state(false);
   let showBatch = $state(false);
+  let batchJobRunning = $state(false);
   let batchInitialItems = $state<MediaItem[] | null>(null);
   let batchAutoStart = $state(false);
   let batchDemoJob = $state<BatchJobStatus | null>(null);
@@ -156,7 +157,7 @@
   );
 
   const workspaceDisabled = $derived(
-    showWelcome || !appState.folder_path || !hasWorkspace || actionInFlight,
+    showWelcome || !appState.folder_path || !hasWorkspace || actionInFlight || batchJobRunning,
   );
   const chromeDisabled = $derived(showWelcome || actionInFlight);
 
@@ -369,7 +370,7 @@
   }
 
   async function runAction(action: () => Promise<void>) {
-    if (actionInFlight) return;
+    if (actionInFlight || batchJobRunning) return;
     actionInFlight = true;
     try {
       await action();
@@ -500,7 +501,7 @@
   }
 
   async function skip(delta: number) {
-    if (actionInFlight) return;
+    if (actionInFlight || batchJobRunning) return;
     trimNotice = "";
     try {
       appState = await invokeLogged<FrontendState>("skip_current", { delta });
@@ -682,7 +683,7 @@
       return true;
     }
 
-    if (!hasWorkspace) return false;
+    if (!hasWorkspace || batchJobRunning) return false;
 
     if (key === "z") {
       flashKey("Undo");
@@ -776,7 +777,7 @@
 
     if (isSkipShortcut(event)) {
       event.preventDefault();
-      if (!hasWorkspace || actionInFlight) return;
+      if (!hasWorkspace || actionInFlight || batchJobRunning) return;
       flashKey(skipModLabel());
       void skip(1);
       return;
@@ -799,7 +800,7 @@
 
     if (!hasWorkspace) return;
 
-    if (actionInFlight) return;
+    if (actionInFlight || batchJobRunning) return;
 
     if (appState.item?.is_video && trimPanel) {
       if (event.key === "[") {
@@ -1034,7 +1035,7 @@
                 bind:videoRef
                 bind:pendingTrim={pendingVideoTrim}
                 {ffmpegAvailable}
-                disabled={actionInFlight}
+                disabled={workspaceDisabled}
                 screenshotDemo={screenshotMode === "workspace-video"}
                 notice={trimNotice}
                 onApply={(start, end) => void applyVideoTrim(start, end)}
@@ -1048,7 +1049,7 @@
               item={appState.item}
               bind:settings={quickSettings}
               activePresetId={quickPresetId}
-              disabled={actionInFlight}
+              disabled={workspaceDisabled}
               onOptimize={() => openBatchForCurrentItem(true)}
               onAdvanced={() => openBatchForCurrentItem(false)}
             />
@@ -1148,6 +1149,7 @@
   demoJob={batchDemoJob}
   demoStep={batchDemoStep}
   demoMode={!!screenshotMode}
+  onRunningChange={(running) => (batchJobRunning = running)}
   onClose={() => {
     showBatch = false;
     batchInitialItems = null;

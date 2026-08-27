@@ -30,9 +30,7 @@ pub fn validate_rel_folder(root: &Path, rel: &str) -> Result<String, String> {
             return Err("Folder path cannot contain '..'.".into());
         }
         if IGNORED_FOLDER_NAMES.contains(&part) {
-            return Err(format!(
-                "Cannot use '{part}' as a destination folder."
-            ));
+            return Err(format!("Cannot use '{part}' as a destination folder."));
         }
     }
 

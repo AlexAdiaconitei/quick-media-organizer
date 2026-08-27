@@ -1,7 +1,7 @@
 <script lang="ts">
   import { openPath } from "@tauri-apps/plugin-opener";
   import { format, t, type Locale } from "../i18n";
-  import { formatSize, savingsPercent } from "../batch";
+  import { formatFailureReport, formatSize, savingsPercent } from "../batch";
   import type { BatchItemStatus, BatchJobStatus } from "../types";
 
   let {
@@ -31,6 +31,7 @@
   const percent = $derived(job.total === 0 ? 0 : (finished / job.total) * 100);
   const failures = $derived(job.items.filter((item) => item.state === "failed"));
   const savings = $derived(savingsPercent(job.bytes_before, job.bytes_after));
+  let failuresCopied = $state(false);
 
   function isPending(item: BatchItemStatus): boolean {
     return item.state === "pending" || item.state === "running";
@@ -38,6 +39,16 @@
 
   function stateLabel(item: BatchItemStatus): string {
     return t(locale, `batch.run.state${item.state[0].toUpperCase()}${item.state.slice(1)}`);
+  }
+
+  async function copyFailures() {
+    try {
+      await navigator.clipboard.writeText(formatFailureReport(failures));
+      failuresCopied = true;
+      window.setTimeout(() => (failuresCopied = false), 1800);
+    } catch (error) {
+      onError(String(error));
+    }
   }
 </script>
 
@@ -116,6 +127,9 @@
   {#if failures.length > 0}
     <details class="batch-failures">
       <summary>{t(locale, "batch.run.failures")} ({failures.length})</summary>
+      <button type="button" class="ghost-btn" onclick={() => void copyFailures()}>
+        {t(locale, failuresCopied ? "batch.run.failuresCopied" : "batch.run.copyFailures")}
+      </button>
       <ul>
         {#each failures as item (item.id)}
           <li><strong>{item.file_name}</strong> — {item.error}</li>

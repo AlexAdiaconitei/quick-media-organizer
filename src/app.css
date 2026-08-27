@@ -1467,6 +1467,10 @@ button:disabled {
   padding: 4px 6px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.03);
+  /* Let the browser skip layout and paint for rows outside the scrollport.
+     This keeps very large batches responsive without changing row semantics. */
+  content-visibility: auto;
+  contain-intrinsic-block-size: 27px;
 }
 
 .batch-item-name {

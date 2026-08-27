@@ -1,11 +1,11 @@
 use crate::fs_util::{apply_timestamps, execute_moves, move_file_preserve, read_timestamps};
 use crate::media::{
-    build_media_item_from_paths, count_root_subfolder_media, enrich_item_metadata,
-    list_subfolders, prepare_sorted_items, refresh_item_size, scan_folder, sort_items,
+    build_media_item_from_paths, count_root_subfolder_media, enrich_item_metadata, list_subfolders,
+    prepare_sorted_items, refresh_item_size, scan_folder, sort_items,
 };
 use crate::models::{
-    ActionResult, AppSettings, FrontendState, LayoutMode, MediaItem, PathPair,
-    RenameMode, SessionData, SessionStats, SortMode, UndoAction, UndoStatKind,
+    ActionResult, AppSettings, FrontendState, LayoutMode, MediaItem, PathPair, RenameMode,
+    SessionData, SessionStats, SortMode, UndoAction, UndoStatKind,
 };
 use crate::path_util::{resolve_dest_dir, validate_rel_folder};
 use crate::rename::{
@@ -123,9 +123,7 @@ impl AppState {
             self.stats = session.stats;
             self.processed_paths = session.processed_paths.into_iter().collect();
             if saved_paths.is_empty() {
-                self.current_index = session
-                    .current_index
-                    .min(items.len().saturating_sub(1));
+                self.current_index = session.current_index.min(items.len().saturating_sub(1));
             }
         }
 
@@ -182,7 +180,10 @@ impl AppState {
             enrich_item_metadata(item);
         }
 
-        let folder_path = self.folder_path.as_ref().map(|p| p.to_string_lossy().to_string());
+        let folder_path = self
+            .folder_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string());
         if self.subfolders_dirty {
             self.refresh_subfolders_cache();
         }
@@ -316,9 +317,7 @@ impl AppState {
             })
             .collect();
 
-        let adjusted_to = feedback
-            .was_modified
-            .then(|| feedback.sanitized.clone());
+        let adjusted_to = feedback.was_modified.then(|| feedback.sanitized.clone());
 
         self.push_undo(UndoAction::Rename {
             moves: undo_moves,
@@ -429,7 +428,11 @@ impl AppState {
         Ok(self.ok("action.savedToFolder"))
     }
 
-    pub fn trim_current_video(&mut self, trim_start: f64, trim_end: f64) -> Result<ActionResult, String> {
+    pub fn trim_current_video(
+        &mut self,
+        trim_start: f64,
+        trim_end: f64,
+    ) -> Result<ActionResult, String> {
         let folder = self.folder_path.clone().ok_or("No folder open")?;
         let item = self
             .current_item()
@@ -516,11 +519,7 @@ impl AppState {
     }
 
     pub fn undo_last(&mut self) -> Result<ActionResult, String> {
-        let action = self
-            .undo_stack
-            .last()
-            .cloned()
-            .ok_or("Nothing to undo")?;
+        let action = self.undo_stack.last().cloned().ok_or("Nothing to undo")?;
 
         let (moves, focus_paths, stat_kind) = match &action {
             UndoAction::Rename {
@@ -597,13 +596,16 @@ impl AppState {
         if paths.is_empty() {
             return None;
         }
-        items.iter().position(|item| item.paths == paths).or_else(|| {
-            items.iter().position(|item| {
-                paths
-                    .iter()
-                    .any(|focus| item.paths.iter().any(|path| path == focus))
+        items
+            .iter()
+            .position(|item| item.paths == paths)
+            .or_else(|| {
+                items.iter().position(|item| {
+                    paths
+                        .iter()
+                        .any(|focus| item.paths.iter().any(|path| path == focus))
+                })
             })
-        })
     }
 
     fn mark_item_processed(&mut self, item: &MediaItem) {
@@ -629,7 +631,10 @@ impl AppState {
 
     fn is_item_processed(&self, item: &MediaItem) -> bool {
         self.processed_paths.contains(&item.id)
-            || item.paths.iter().any(|path| self.processed_paths.contains(path))
+            || item
+                .paths
+                .iter()
+                .any(|path| self.processed_paths.contains(path))
     }
 
     fn find_next_unprocessed_from(&self, start: usize) -> Option<usize> {
@@ -781,7 +786,10 @@ impl AppState {
         settings: &crate::batch::BatchSettings,
     ) -> Result<(), String> {
         let mut stored = settings.clone();
-        if matches!(stored.output, crate::batch::OutputMode::ReplaceOriginal { .. }) {
+        if matches!(
+            stored.output,
+            crate::batch::OutputMode::ReplaceOriginal { .. }
+        ) {
             stored.output = crate::batch::OutputMode::default();
         }
         self.app_settings.last_batch_settings = Some(stored);
@@ -848,14 +856,9 @@ impl AppState {
             if !current_paths.is_empty() {
                 self.current_index = self
                     .find_item_index_by_paths(&current_paths, &self.items)
-                    .unwrap_or_else(|| {
-                        self.current_index
-                            .min(self.items.len().saturating_sub(1))
-                    });
+                    .unwrap_or_else(|| self.current_index.min(self.items.len().saturating_sub(1)));
             } else {
-                self.current_index = self
-                    .current_index
-                    .min(self.items.len().saturating_sub(1));
+                self.current_index = self.current_index.min(self.items.len().saturating_sub(1));
             }
         }
         self.persist_session_best_effort();
@@ -979,7 +982,8 @@ impl AppState {
     ) {
         match action {
             UndoAction::Rename { .. } => {
-                let post_rename_paths: Vec<String> = moves.iter().map(|pair| pair.from.clone()).collect();
+                let post_rename_paths: Vec<String> =
+                    moves.iter().map(|pair| pair.from.clone()).collect();
                 if let Some(idx) = self.find_item_index_by_paths(&post_rename_paths, &self.items) {
                     let _ = self.update_item_after_rename(idx, focus_paths);
                     self.current_index = if self.sort_mode == SortMode::FileName {
@@ -1020,9 +1024,7 @@ impl AppState {
         if self.items.is_empty() {
             self.current_index = 0;
         } else {
-            self.current_index = self
-                .current_index
-                .min(self.items.len().saturating_sub(1));
+            self.current_index = self.current_index.min(self.items.len().saturating_sub(1));
         }
     }
 

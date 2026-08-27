@@ -207,9 +207,7 @@ pub fn image_flags(settings: &ImageSettings, out_ext: &str) -> Result<Vec<String
 
 /// Clamp the long edge, keep the aspect ratio, never upscale.
 pub fn image_scale_filter(max_edge: u32) -> String {
-    format!(
-        "scale='if(gt(iw,ih),min({max_edge},iw),-2)':'if(gt(iw,ih),-2,min({max_edge},ih))'"
-    )
+    format!("scale='if(gt(iw,ih),min({max_edge},iw),-2)':'if(gt(iw,ih),-2,min({max_edge},ih))'")
 }
 
 /// UI quality (1 worst … 100 best) mapped to ffmpeg's mjpeg qscale (2 best … 31 worst).
@@ -232,7 +230,10 @@ pub fn output_file_name(source: &Path, ext: &str, suffix: Option<&str>) -> Strin
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("media");
-    let suffix = suffix.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("");
+    let suffix = suffix
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("");
     format!("{stem}{suffix}.{ext}")
 }
 
@@ -269,7 +270,10 @@ pub fn resolve_output_path(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("media");
-    let suffix = suffix.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("");
+    let suffix = suffix
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("");
     for n in 2..1000 {
         let candidate = dest_dir.join(format!("{stem}{suffix} ({n}).{ext}"));
         if candidate != source && !exists(&candidate) {
@@ -388,7 +392,9 @@ mod tests {
             keep_metadata: false,
             ..VideoSettings::default()
         };
-        assert!(video_flags(&settings).join(" ").contains("-map_metadata -1"));
+        assert!(video_flags(&settings)
+            .join(" ")
+            .contains("-map_metadata -1"));
     }
 
     #[test]
@@ -469,8 +475,15 @@ mod tests {
             None
         );
         assert_eq!(
-            resolve_output_path(&source, &dir, "mp4", None, ConflictPolicy::Overwrite, &taken)
-                .unwrap(),
+            resolve_output_path(
+                &source,
+                &dir,
+                "mp4",
+                None,
+                ConflictPolicy::Overwrite,
+                &taken
+            )
+            .unwrap(),
             Some(PathBuf::from("/out/IMG_1.mp4"))
         );
         assert_eq!(
@@ -479,8 +492,15 @@ mod tests {
             Some(PathBuf::from("/out/IMG_1 (2).mp4"))
         );
         assert_eq!(
-            resolve_output_path(&source, &dir, "mp4", None, ConflictPolicy::Rename, &no_files)
-                .unwrap(),
+            resolve_output_path(
+                &source,
+                &dir,
+                "mp4",
+                None,
+                ConflictPolicy::Rename,
+                &no_files
+            )
+            .unwrap(),
             Some(PathBuf::from("/out/IMG_1.mp4"))
         );
     }
@@ -489,10 +509,16 @@ mod tests {
     fn never_targets_the_source_file_even_when_overwriting() {
         let dir = PathBuf::from("/in");
         let source = PathBuf::from("/in/IMG_1.mp4");
-        let resolved =
-            resolve_output_path(&source, &dir, "mp4", None, ConflictPolicy::Overwrite, &no_files)
-                .unwrap()
-                .unwrap();
+        let resolved = resolve_output_path(
+            &source,
+            &dir,
+            "mp4",
+            None,
+            ConflictPolicy::Overwrite,
+            &no_files,
+        )
+        .unwrap()
+        .unwrap();
         assert_ne!(resolved, source);
         assert_eq!(resolved, PathBuf::from("/in/IMG_1 (2).mp4"));
     }

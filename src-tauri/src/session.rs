@@ -43,4 +43,3 @@ pub fn save_app_settings(app_data_dir: &Path, settings: &AppSettings) -> Result<
     let content = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     fs::write(app_data_dir.join(SETTINGS_FILE), content).map_err(|e| e.to_string())
 }
-

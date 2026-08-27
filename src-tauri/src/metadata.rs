@@ -8,8 +8,9 @@
 //! the converted file (`img-parts` rewrites JPEG/PNG/WebP containers without
 //! touching the pixels).
 //!
-//! Everything here is best effort: a photo that arrives without EXIF, or in a
-//! container that cannot hold any, is still a perfectly good conversion.
+//! A photo without readable EXIF, or whose target container cannot hold it, is
+//! still a valid conversion. Once an EXIF block has been found, however, a
+//! rewrite failure is reported so `keep_metadata` never succeeds deceptively.
 
 use std::fs;
 use std::io::BufReader;
@@ -86,8 +87,8 @@ pub fn copy_exif(source: &Path, target: &Path) -> Result<bool, String> {
     // Written beside the target and renamed over it, so a failure half way
     // through cannot leave a truncated image where a valid one was.
     let staged = target.with_extension(format!("{extension}.qmo-exif"));
-    let file = fs::File::create(&staged)
-        .map_err(|e| format!("Cannot write the converted file: {e}"))?;
+    let file =
+        fs::File::create(&staged).map_err(|e| format!("Cannot write the converted file: {e}"))?;
     if let Err(error) = image.encoder().write_to(file) {
         let _ = fs::remove_file(&staged);
         return Err(format!("Cannot write the converted file: {error}"));

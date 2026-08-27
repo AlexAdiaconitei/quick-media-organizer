@@ -172,7 +172,7 @@ Requisitos: [Node.js](https://nodejs.org/) 20+, [Rust](https://rustup.rs/),
 [pnpm](https://pnpm.io/) (`corepack enable`)
 
 ```bash
-git clone https://github.com/FerranVidalBelles/quick-media-organizer.git
+git clone https://github.com/AlexAdiaconitei/quick-media-organizer.git
 cd quick-media-organizer
 pnpm install
 pnpm dev            # abre la app de escritorio

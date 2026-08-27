@@ -111,10 +111,7 @@ pub fn resolve_group_original_names(dir: &Path, sources: &[PathBuf]) -> Vec<Stri
         return vec!["file".to_string()];
     }
 
-    if originals
-        .iter()
-        .all(|name| !dir.join(name).exists())
-    {
+    if originals.iter().all(|name| !dir.join(name).exists()) {
         return originals;
     }
 
@@ -151,10 +148,7 @@ pub fn resolve_trash_name(deleted_dir: &Path, original_name: &str) -> String {
     }
 
     let path = PathBuf::from(original_name);
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("file");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
     let ext = path
         .extension()
         .and_then(|e| e.to_str())

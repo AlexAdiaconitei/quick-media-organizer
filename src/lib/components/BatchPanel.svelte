@@ -5,6 +5,7 @@
   import BatchReplaceConfirmDialog from "./BatchReplaceConfirmDialog.svelte";
   import BatchSelectGrid from "./BatchSelectGrid.svelte";
   import BatchSettingsForm from "./BatchSettingsForm.svelte";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
   import Switch from "./Switch.svelte";
   import {
     activeJob,
@@ -21,6 +22,7 @@
     sanitizeStoredSettings,
     scanFolder,
     selectedPaths,
+    shouldFinalizeRecoveredJob,
     startJob,
   } from "../batch";
   import { invokeLogged } from "../errorReporter";
@@ -48,6 +50,7 @@
     demoStep = null,
     demoMode = false,
     onClose,
+    onRunningChange = () => {},
     onSessionChanged,
     onError,
   }: {
@@ -67,6 +70,7 @@
     demoStep?: Step | null;
     demoMode?: boolean;
     onClose: () => void;
+    onRunningChange?: (running: boolean) => void;
     onSessionChanged: (state: FrontendState) => void;
     onError: (message: string) => void;
   } = $props();
@@ -93,7 +97,8 @@
   let busy = $state(false);
   let recursiveScan = $state(true);
   let showReplaceConfirm = $state(false);
-  let loaded = $state(false);
+  let showBackgroundCloseConfirm = $state(false);
+  let initializationPromise: Promise<void> | null = null;
 
   const presets = $derived([...builtInPresets(locale), ...savedPresets]);
   const activePreset = $derived(matchingPreset(presets, settings));
@@ -128,6 +133,10 @@
   onMount(() => {
     if (!isTauriAvailable()) return;
 
+    // Discover an active or just-finished job even when the panel starts
+    // closed, as happens after the webview reloads.
+    void ensureInitialized();
+
     const unlisteners = [
       safeListen<BatchItemStatus>("batch://item", applyItemUpdate),
       safeListen<BatchProgressSummary>("batch://progress", applyProgress),
@@ -142,6 +151,10 @@
   });
 
   let wasOpen = $state(false);
+
+  $effect(() => {
+    onRunningChange(jobRunning);
+  });
 
   $effect(() => {
     if (open === wasOpen) return;
@@ -164,10 +177,7 @@
       return;
     }
 
-    if (!loaded) {
-      loaded = true;
-      await initialize();
-    }
+    await ensureInitialized();
 
     if (initialSettings) {
       settings = sanitizeStoredSettings(structuredClone($state.snapshot(initialSettings)));
@@ -213,6 +223,7 @@
       if (running) {
         job = running;
         step = "run";
+        if (shouldFinalizeRecoveredJob(running)) await applyDone(running);
       }
 
       if (hasQueue && items.length === 0 && !(initialItems && initialItems.length > 0)) {
@@ -224,6 +235,13 @@
     } finally {
       busy = false;
     }
+  }
+
+  function ensureInitialized(): Promise<void> {
+    if (!initializationPromise) {
+      initializationPromise = initialize();
+    }
+    return initializationPromise;
   }
 
   function applyItemUpdate(update: BatchItemStatus) {
@@ -359,6 +377,10 @@
       onError(format(locale, "batch.ffmpegMissing", { command: ffmpegInstallCommand() }));
       return;
     }
+    if (hasHeic && !capabilities.heic_decode) {
+      onError(t(locale, "batch.heicWarning"));
+      return;
+    }
 
     busy = true;
     try {
@@ -382,14 +404,23 @@
     }
   }
 
-  function close() {
+  function requestClose() {
+    if (jobRunning) {
+      showBackgroundCloseConfirm = true;
+      return;
+    }
+    onClose();
+  }
+
+  function closeInBackground() {
+    showBackgroundCloseConfirm = false;
     onClose();
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && !showReplaceConfirm) {
+    if (event.key === "Escape" && !showReplaceConfirm && !showBackgroundCloseConfirm) {
       event.preventDefault();
-      close();
+      requestClose();
     }
   }
 </script>
@@ -402,7 +433,7 @@
       type="button"
       class="modal-scrim"
       aria-label={t(locale, "common.close")}
-      onclick={close}
+      onclick={requestClose}
     ></button>
     <div
       class="modal-card batch-card"
@@ -512,7 +543,12 @@
           <button
             type="button"
             class={replacesOriginals ? "danger-btn" : "primary-btn"}
-            disabled={busy || selected.size === 0 || !capabilities.available}
+            disabled={
+              busy ||
+              selected.size === 0 ||
+              !capabilities.available ||
+              (hasHeic && !capabilities.heic_decode)
+            }
             onclick={() => void start()}
           >
             {format(locale, replacesOriginals ? "batch.run.startReplace" : "batch.run.start", {
@@ -532,7 +568,7 @@
           </button>
         {/if}
 
-        <button type="button" class="ghost-btn" onclick={close}>
+        <button type="button" class="ghost-btn" onclick={requestClose}>
           {t(locale, "batch.close")}
         </button>
       </div>
@@ -557,4 +593,13 @@
   backupPath={backupHint}
   onConfirm={confirmReplaceMode}
   onCancel={cancelReplaceMode}
+/>
+
+<ConfirmDialog
+  {locale}
+  open={showBackgroundCloseConfirm}
+  message={t(locale, "batch.run.closeWarning")}
+  confirmLabel={t(locale, "batch.run.closeAnyway")}
+  onConfirm={closeInBackground}
+  onCancel={() => (showBackgroundCloseConfirm = false)}
 />

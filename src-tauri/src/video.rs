@@ -5,8 +5,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
-use std::time::UNIX_EPOCH;
+use std::sync::{mpsc, Mutex};
+use std::time::{Duration, UNIX_EPOCH};
 
 use crate::batch::FfmpegCapabilities;
 use crate::models::{VideoPreviewInfo, VideoPreviewMode};
@@ -204,28 +204,57 @@ impl FfmpegTools {
             tail
         });
 
-        let mut killed = false;
-        if let Some(stdout) = child.stdout.take() {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if cancel.load(Ordering::Relaxed) {
-                    let _ = child.kill();
-                    killed = true;
-                    break;
-                }
-                if let Some(progress) = parse_progress_line(&line, total_duration) {
-                    on_progress(progress);
+        // Reading stdout directly would block until ffmpeg emits its next
+        // progress line. A stalled decoder would then ignore cancellation.
+        // Forward lines through a channel so this thread can poll the flag and
+        // kill the child within one interval even when stdout is silent.
+        let (progress_tx, progress_rx) = mpsc::channel();
+        let stdout = child.stdout.take();
+        let stdout_handle = std::thread::spawn(move || {
+            if let Some(stdout) = stdout {
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    if progress_tx.send(line).is_err() {
+                        break;
+                    }
                 }
             }
-        }
+        });
 
-        if !killed && cancel.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            killed = true;
-        }
+        let mut killed = false;
+        let mut stdout_disconnected = false;
+        let status = loop {
+            if cancel.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                killed = true;
+                break child
+                    .wait()
+                    .map_err(|e| format!("Failed to wait for cancelled ffmpeg: {e}"))?;
+            }
 
-        let status = child
-            .wait()
-            .map_err(|e| format!("Failed to wait for ffmpeg: {e}"))?;
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|e| format!("Failed to poll ffmpeg: {e}"))?
+            {
+                break status;
+            }
+
+            if stdout_disconnected {
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+
+            match progress_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(line) => {
+                    if let Some(progress) = parse_progress_line(&line, total_duration) {
+                        on_progress(progress);
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => stdout_disconnected = true,
+            }
+        };
+
+        let _ = stdout_handle.join();
         let stderr_tail = stderr_handle.join().unwrap_or_default();
 
         if killed {
@@ -243,9 +272,15 @@ impl FfmpegTools {
     /// Which encoders/decoders this ffmpeg build actually ships, so the UI can
     /// hide codecs that would fail and warn about HEIC before starting a job.
     pub fn capabilities(&self) -> FfmpegCapabilities {
-        let encoders = self.run_text(&["-hide_banner", "-encoders"]).unwrap_or_default();
-        let decoders = self.run_text(&["-hide_banner", "-decoders"]).unwrap_or_default();
-        let demuxers = self.run_text(&["-hide_banner", "-demuxers"]).unwrap_or_default();
+        let encoders = self
+            .run_text(&["-hide_banner", "-encoders"])
+            .unwrap_or_default();
+        let decoders = self
+            .run_text(&["-hide_banner", "-decoders"])
+            .unwrap_or_default();
+        let demuxers = self
+            .run_text(&["-hide_banner", "-demuxers"])
+            .unwrap_or_default();
         let version = self
             .run_text(&["-hide_banner", "-version"])
             .and_then(|text| text.lines().next().map(|l| l.trim().to_string()));
@@ -278,7 +313,9 @@ pub const CANCELLED: &str = "__cancelled__";
 /// Parses one `key=value` line of ffmpeg's `-progress` stream into 0..1.
 fn parse_progress_line(line: &str, total_duration: Option<f64>) -> Option<f32> {
     let total = total_duration.filter(|d| *d > 0.0)?;
-    let value = line.strip_prefix("out_time_us=").or_else(|| line.strip_prefix("out_time_ms="))?;
+    let value = line
+        .strip_prefix("out_time_us=")
+        .or_else(|| line.strip_prefix("out_time_ms="))?;
     let micros: f64 = value.trim().parse().ok()?;
     // out_time_ms is actually microseconds in ffmpeg's progress output.
     let seconds = micros / 1_000_000.0;
@@ -382,7 +419,12 @@ fn binary_candidates(name: &str) -> Vec<PathBuf> {
         )));
 
         if let Some(program_data) = std::env::var_os("ProgramData").map(PathBuf::from) {
-            candidates.push(program_data.join("chocolatey").join("bin").join(format!("{name}.exe")));
+            candidates.push(
+                program_data
+                    .join("chocolatey")
+                    .join("bin")
+                    .join(format!("{name}.exe")),
+            );
         }
         if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
             candidates.push(home.join("scoop").join("shims").join(format!("{name}.exe")));
@@ -486,7 +528,9 @@ pub fn resolve_video_preview(source: &Path, cache_dir: &Path) -> VideoPreviewInf
         let _ = filetime::set_file_mtime(&proxy_path, filetime::FileTime::now());
         return VideoPreviewInfo {
             playback_path: proxy_path.to_string_lossy().to_string(),
-            poster_path: poster_path.is_file().then(|| poster_path.to_string_lossy().to_string()),
+            poster_path: poster_path
+                .is_file()
+                .then(|| poster_path.to_string_lossy().to_string()),
             preview_mode: VideoPreviewMode::Proxy,
             hint: None,
         };
@@ -506,7 +550,9 @@ pub fn resolve_video_preview(source: &Path, cache_dir: &Path) -> VideoPreviewInf
         prune_preview_cache(cache_dir, PREVIEW_CACHE_MAX_BYTES);
         return VideoPreviewInfo {
             playback_path: proxy_path.to_string_lossy().to_string(),
-            poster_path: poster_path.is_file().then(|| poster_path.to_string_lossy().to_string()),
+            poster_path: poster_path
+                .is_file()
+                .then(|| poster_path.to_string_lossy().to_string()),
             preview_mode: VideoPreviewMode::Proxy,
             hint: None,
         };
@@ -564,7 +610,9 @@ fn prune_preview_cache(cache_dir: &Path, max_bytes: u64) {
 
 fn maybe_poster(tools: &FfmpegTools, source: &Path, poster_path: &Path) -> Option<String> {
     tools.capture_poster_frame(source, poster_path).ok()?;
-    poster_path.is_file().then(|| poster_path.to_string_lossy().to_string())
+    poster_path
+        .is_file()
+        .then(|| poster_path.to_string_lossy().to_string())
 }
 
 fn preview_cache_key(path: &Path) -> String {
@@ -600,13 +648,23 @@ mod tests {
             Some(exe_dir.as_path()),
             "the copy shipped in the installer must be probed first"
         );
-        assert_eq!(candidates[1], PathBuf::from("ffmpeg"), "then whatever is on PATH");
+        assert_eq!(
+            candidates[1],
+            PathBuf::from("ffmpeg"),
+            "then whatever is on PATH"
+        );
     }
 
     #[test]
     fn progress_lines_are_parsed_against_the_duration() {
-        assert_eq!(parse_progress_line("out_time_us=5000000", Some(10.0)), Some(0.5));
-        assert_eq!(parse_progress_line("out_time_us=20000000", Some(10.0)), Some(1.0));
+        assert_eq!(
+            parse_progress_line("out_time_us=5000000", Some(10.0)),
+            Some(0.5)
+        );
+        assert_eq!(
+            parse_progress_line("out_time_us=20000000", Some(10.0)),
+            Some(1.0)
+        );
         assert_eq!(parse_progress_line("frame=12", Some(10.0)), None);
         assert_eq!(parse_progress_line("out_time_us=5000000", None), None);
     }

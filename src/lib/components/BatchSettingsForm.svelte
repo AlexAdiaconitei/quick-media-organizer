@@ -57,6 +57,12 @@
     settings.output.mode === "subfolder" ? settings.output.name : "_optimized",
   );
 
+  $effect(() => {
+    if (imageMetadataFate === "dropped" && settings.image.keep_metadata) {
+      settings.image.keep_metadata = false;
+    }
+  });
+
   const codecOptions = $derived(
     [
       capabilities.h265 && {
@@ -337,8 +343,9 @@
       <Switch
         bind:checked={settings.image.keep_metadata}
         label={t(locale, "batch.settings.keepMetadata")}
+        disabled={imageMetadataFate === "dropped"}
       />
-      {#if settings.image.keep_metadata && imageMetadataFate !== "kept"}
+      {#if imageMetadataFate === "dropped" || (settings.image.keep_metadata && imageMetadataFate !== "kept")}
         <small class="option-hint">
           {t(
             locale,

@@ -126,11 +126,7 @@ impl ErrorLog {
     }
 
     pub fn list(&self) -> Result<Vec<ErrorEntry>, String> {
-        Ok(self
-            .entries
-            .lock()
-            .map_err(|e| e.to_string())?
-            .clone())
+        Ok(self.entries.lock().map_err(|e| e.to_string())?.clone())
     }
 
     pub fn clear(&self) -> Result<(), String> {
@@ -139,10 +135,7 @@ impl ErrorLog {
                 fs::write(path, "").map_err(|e| e.to_string())?;
             }
         }
-        self.entries
-            .lock()
-            .map_err(|e| e.to_string())?
-            .clear();
+        self.entries.lock().map_err(|e| e.to_string())?.clear();
         Ok(())
     }
 

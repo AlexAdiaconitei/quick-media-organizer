@@ -2,8 +2,8 @@ use crate::batch::runner::{
     new_job_status, plan_items, BatchEvents, FfmpegEncoder, MediaEncoder, SharedBatchState,
 };
 use crate::batch::{
-    BatchItemStatus, BatchJobStatus, BatchPreset, BatchProgressSummary, BatchSettings,
-    FfmpegCapabilities, OutputMode,
+    BatchItemStatus, BatchJobStatus, BatchMediaType, BatchPreset, BatchProgressSummary,
+    BatchSettings, FfmpegCapabilities, ImageFormat, OutputMode,
 };
 use crate::error_log::{ErrorEntry, SharedErrorLog};
 use crate::models::{
@@ -14,7 +14,7 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 fn log_rust_error(log: &SharedErrorLog, command: &str, error: &str) {
     if let Ok(guard) = log.lock() {
@@ -98,20 +98,18 @@ pub fn set_ui_preferences(
     show_metadata: bool,
     video_with_sound: bool,
 ) -> Result<AppSettings, String> {
-    state
-        .lock()
-        .map_err(|e| e.to_string())?
-        .set_ui_preferences(layout_mode, show_metadata, video_with_sound)
+    state.lock().map_err(|e| e.to_string())?.set_ui_preferences(
+        layout_mode,
+        show_metadata,
+        video_with_sound,
+    )
 }
 
 #[tauri::command]
 pub async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let folder = app
-        .dialog()
-        .file()
-        .blocking_pick_folder();
+    let folder = app.dialog().file().blocking_pick_folder();
 
     Ok(folder.map(|p| p.to_string()))
 }
@@ -122,24 +120,26 @@ pub fn open_folder(
     log: State<'_, SharedErrorLog>,
     path: String,
 ) -> Result<FrontendState, String> {
-    wrap(&log, "open_folder", (|| {
-        let mut guard = state.lock().map_err(|e| e.to_string())?;
-        guard.open_folder(PathBuf::from(path))?;
-        let (session_reset, resume_from, subfolder_media_count) = guard.take_transient_open_notices();
-        let mut frontend = guard.to_frontend_state();
-        frontend.session_reset = session_reset;
-        frontend.resume_from = resume_from;
-        frontend.subfolder_media_count = subfolder_media_count;
-        Ok(frontend)
-    })())
+    wrap(
+        &log,
+        "open_folder",
+        (|| {
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            guard.open_folder(PathBuf::from(path))?;
+            let (session_reset, resume_from, subfolder_media_count) =
+                guard.take_transient_open_notices();
+            let mut frontend = guard.to_frontend_state();
+            frontend.session_reset = session_reset;
+            frontend.resume_from = resume_from;
+            frontend.subfolder_media_count = subfolder_media_count;
+            Ok(frontend)
+        })(),
+    )
 }
 
 #[tauri::command]
 pub fn get_state(state: State<'_, SharedState>) -> Result<FrontendState, String> {
-    Ok(state
-        .lock()
-        .map_err(|e| e.to_string())?
-        .to_frontend_state())
+    Ok(state.lock().map_err(|e| e.to_string())?.to_frontend_state())
 }
 
 #[tauri::command]
@@ -308,14 +308,34 @@ pub fn trim_current_video(
 // ---------------------------------------------------------------------------
 
 const MEDIA_FILTER_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp", "tiff", "tif", "mp4", "mov",
-    "m4v", "avi", "mkv", "3gp",
+    "jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp", "tiff", "tif", "mp4", "mov", "m4v",
+    "avi", "mkv", "3gp",
 ];
+
+fn contains_heic(paths: &[String]) -> bool {
+    paths.iter().any(|path| {
+        Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("heic") || extension.eq_ignore_ascii_case("heif")
+            })
+    })
+}
+
+fn requests_unavailable_avif_metadata(paths: &[String], settings: &BatchSettings) -> bool {
+    settings.image.keep_metadata
+        && settings.image.format == ImageFormat::Avif
+        && paths.iter().any(|path| {
+            crate::batch::ffmpeg_args::classify_path(Path::new(path)) == Some(BatchMediaType::Image)
+        })
+}
 
 /// Forwards runner updates to the window. Channel names are prefixed so they
 /// cannot collide with other events.
 struct WindowEvents {
     app: AppHandle,
+    report_dirs: Vec<PathBuf>,
 }
 
 impl BatchEvents for WindowEvents {
@@ -328,6 +348,11 @@ impl BatchEvents for WindowEvents {
     }
 
     fn done(&self, job: &BatchJobStatus) {
+        for dir in &self.report_dirs {
+            if let Err(error) = crate::batch::report::write_batch_report(dir, job) {
+                eprintln!("[QMO][batch] {error}");
+            }
+        }
         let _ = self.app.emit("batch://done", job);
     }
 }
@@ -441,78 +466,111 @@ pub fn start_batch_job(
     paths: Vec<String>,
     settings: BatchSettings,
 ) -> Result<BatchJobStatus, String> {
-    wrap(&log, "start_batch_job", (|| {
-        if paths.is_empty() {
-            return Err("Select at least one photo or video.".into());
-        }
+    wrap(
+        &log,
+        "start_batch_job",
+        (|| {
+            if paths.is_empty() {
+                return Err("Select at least one photo or video.".into());
+            }
 
-        // Destructive runs must carry the confirmation the dialog sets. This is
-        // checked before a single file is touched.
-        if let OutputMode::ReplaceOriginal { confirmed, .. } = &settings.output {
-            if !confirmed {
-                return Err(
+            // Destructive runs must carry the confirmation the dialog sets. This is
+            // checked before a single file is touched.
+            if let OutputMode::ReplaceOriginal { confirmed, .. } = &settings.output {
+                if !confirmed {
+                    return Err(
                     "Replacing originals was not confirmed — open the confirmation dialog first."
                         .into(),
                 );
-            }
-        }
-
-        let encoder = Arc::new(FfmpegEncoder::locate()?);
-
-        {
-            let runner = batch.lock().map_err(|e| e.to_string())?;
-            if let Some(active) = runner.active_job_id() {
-                if runner
-                    .snapshot(&active)
-                    .map(|job| job.running)
-                    .unwrap_or(false)
-                {
-                    return Err("A batch job is already running.".into());
                 }
             }
-        }
 
-        let plans = plan_items(&paths, &settings);
-        let statuses: Vec<BatchItemStatus> =
-            plans.iter().map(|planned| planned.status.clone()).collect();
-        let output_dir = plans
-            .iter()
-            .find_map(|planned| planned.plan.as_ref())
-            .and_then(|plan| plan.final_output.parent())
-            .map(|dir| dir.to_string_lossy().to_string());
-        let replaces_originals = matches!(settings.output, OutputMode::ReplaceOriginal { .. });
+            let encoder = Arc::new(FfmpegEncoder::locate()?);
+            if contains_heic(&paths) && !encoder.capabilities().heic_decode {
+                return Err(
+                "This FFmpeg build cannot read HEIC/HEIF. Install a full FFmpeg build before converting those files."
+                    .into(),
+            );
+            }
+            if requests_unavailable_avif_metadata(&paths, &settings) {
+                return Err(
+                    "AVIF metadata preservation is unavailable. Disable metadata preservation or choose another image format."
+                        .into(),
+                );
+            }
 
-        let job_id = {
-            let mut runner = batch.lock().map_err(|e| e.to_string())?;
-            runner.next_job_id()
-        };
-        let job = Arc::new(Mutex::new(new_job_status(
-            job_id.clone(),
-            statuses,
-            output_dir,
-            replaces_originals,
-        )));
-        let cancel = Arc::new(AtomicBool::new(false));
+            {
+                let runner = batch.lock().map_err(|e| e.to_string())?;
+                if let Some(active) = runner.active_job_id() {
+                    if runner
+                        .snapshot(&active)
+                        .map(|job| job.running)
+                        .unwrap_or(false)
+                    {
+                        return Err("A batch job is already running.".into());
+                    }
+                }
+            }
 
-        {
-            let mut runner = batch.lock().map_err(|e| e.to_string())?;
-            runner.register(Arc::clone(&job), Arc::clone(&cancel), &job_id);
-        }
+            let plans = plan_items(&paths, &settings);
+            let statuses: Vec<BatchItemStatus> =
+                plans.iter().map(|planned| planned.status.clone()).collect();
+            let output_dir = plans
+                .iter()
+                .find_map(|planned| planned.plan.as_ref())
+                .and_then(|plan| plan.final_output.parent())
+                .map(|dir| dir.to_string_lossy().to_string());
+            let replaces_originals = matches!(settings.output, OutputMode::ReplaceOriginal { .. });
 
-        if let Ok(mut guard) = state.lock() {
-            let _ = guard.remember_batch_settings(&settings);
-        }
+            let job_id = {
+                let mut runner = batch.lock().map_err(|e| e.to_string())?;
+                runner.next_job_id()
+            };
+            let job = Arc::new(Mutex::new(new_job_status(
+                job_id.clone(),
+                statuses,
+                output_dir,
+                replaces_originals,
+            )));
+            let cancel = Arc::new(AtomicBool::new(false));
 
-        let snapshot = job.lock().map_err(|e| e.to_string())?.clone();
+            {
+                let mut runner = batch.lock().map_err(|e| e.to_string())?;
+                runner.register(Arc::clone(&job), Arc::clone(&cancel), &job_id);
+            }
 
-        let events = Arc::new(WindowEvents { app: app.clone() });
-        let thread_job = Arc::clone(&job);
-        std::thread::spawn(move || {
-            crate::batch::runner::run_job(thread_job, plans, settings, encoder, events, cancel);
-        });
+            if let Ok(mut guard) = state.lock() {
+                let _ = guard.remember_batch_settings(&settings);
+            }
 
-        Ok(snapshot)
-    })())
+            let snapshot = job.lock().map_err(|e| e.to_string())?.clone();
+
+            let mut report_dirs = app
+                .path()
+                .app_data_dir()
+                .ok()
+                .map(|dir| vec![dir.join("logs")])
+                .unwrap_or_default();
+            if cfg!(debug_assertions) {
+                if let Ok(cwd) = std::env::current_dir() {
+                    let debug_dir = cwd.join("logs");
+                    if !report_dirs.contains(&debug_dir) {
+                        report_dirs.push(debug_dir);
+                    }
+                }
+            }
+            let events = Arc::new(WindowEvents {
+                app: app.clone(),
+                report_dirs,
+            });
+            let thread_job = Arc::clone(&job);
+            std::thread::spawn(move || {
+                crate::batch::runner::run_job(thread_job, plans, settings, encoder, events, cancel);
+            });
+
+            Ok(snapshot)
+        })(),
+    )
 }
 
 #[tauri::command]
@@ -541,43 +599,47 @@ pub fn finalize_batch_job(
     log: State<'_, SharedErrorLog>,
     job_id: String,
 ) -> Result<FrontendState, String> {
-    wrap(&log, "finalize_batch_job", (|| {
-        let replacements = {
-            let runner = batch.lock().map_err(|e| e.to_string())?;
-            let handle = runner
-                .job(&job_id)
-                .ok_or_else(|| format!("Unknown batch job: {job_id}"))?;
-            let mut guard = handle.lock().map_err(|e| e.to_string())?;
-            if guard.running {
-                return Err("The batch job is still running.".into());
-            }
-            if guard.finalized {
-                Vec::new()
-            } else {
-                guard.finalized = true;
-                guard
-                    .replacements
-                    .iter()
-                    .map(|r| {
-                        (
-                            r.backup_path.clone(),
-                            r.original_path.clone(),
-                            r.converted_path.clone(),
-                        )
-                    })
-                    .collect()
-            }
-        };
+    wrap(
+        &log,
+        "finalize_batch_job",
+        (|| {
+            let replacements = {
+                let runner = batch.lock().map_err(|e| e.to_string())?;
+                let handle = runner
+                    .job(&job_id)
+                    .ok_or_else(|| format!("Unknown batch job: {job_id}"))?;
+                let mut guard = handle.lock().map_err(|e| e.to_string())?;
+                if guard.running {
+                    return Err("The batch job is still running.".into());
+                }
+                if guard.finalized {
+                    Vec::new()
+                } else {
+                    guard.finalized = true;
+                    guard
+                        .replacements
+                        .iter()
+                        .map(|r| {
+                            (
+                                r.backup_path.clone(),
+                                r.original_path.clone(),
+                                r.converted_path.clone(),
+                            )
+                        })
+                        .collect()
+                }
+            };
 
-        {
-            let mut runner = batch.lock().map_err(|e| e.to_string())?;
-            runner.clear_active(&job_id);
-        }
+            {
+                let mut runner = batch.lock().map_err(|e| e.to_string())?;
+                runner.clear_active(&job_id);
+            }
 
-        let mut guard = state.lock().map_err(|e| e.to_string())?;
-        guard.apply_batch_replacements(&replacements)?;
-        Ok(guard.to_frontend_state())
-    })())
+            let mut guard = state.lock().map_err(|e| e.to_string())?;
+            guard.apply_batch_replacements(&replacements)?;
+            Ok(guard.to_frontend_state())
+        })(),
+    )
 }
 
 /// Duration of one file, for the batch selection list.
@@ -599,30 +661,34 @@ pub fn scan_folder_media(
     recursive: bool,
     exclude_dirs: Vec<String>,
 ) -> Result<Vec<MediaItem>, String> {
-    wrap(&log, "scan_folder_media", (|| {
-        let root = PathBuf::from(&path);
-        if !root.is_dir() {
-            return Err(format!("{path} is not a folder."));
-        }
+    wrap(
+        &log,
+        "scan_folder_media",
+        (|| {
+            let root = PathBuf::from(&path);
+            if !root.is_dir() {
+                return Err(format!("{path} is not a folder."));
+            }
 
-        let excluded: Vec<PathBuf> = exclude_dirs
-            .iter()
-            .filter(|dir| !dir.trim().is_empty())
-            .map(PathBuf::from)
-            .collect();
+            let excluded: Vec<PathBuf> = exclude_dirs
+                .iter()
+                .filter(|dir| !dir.trim().is_empty())
+                .map(PathBuf::from)
+                .collect();
 
-        let items = crate::media::scan_folder(&root, recursive)?;
-        Ok(items
-            .into_iter()
-            .filter(|item| {
-                !item.paths.iter().any(|file| {
-                    excluded
-                        .iter()
-                        .any(|dir| crate::path_util::is_path_inside_root(dir, Path::new(file)))
+            let items = crate::media::scan_folder(&root, recursive)?;
+            Ok(items
+                .into_iter()
+                .filter(|item| {
+                    !item.paths.iter().any(|file| {
+                        excluded
+                            .iter()
+                            .any(|dir| crate::path_util::is_path_inside_root(dir, Path::new(file)))
+                    })
                 })
-            })
-            .collect())
-    })())
+                .collect())
+        })(),
+    )
 }
 
 /// The job currently registered, if any. Lets the panel re-attach to a run
@@ -692,7 +758,36 @@ pub fn get_update_context(app: AppHandle) -> Result<UpdateContext, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::releases_url_from_endpoint;
+    use super::{contains_heic, releases_url_from_endpoint, requests_unavailable_avif_metadata};
+    use crate::batch::{BatchSettings, ImageFormat};
+
+    #[test]
+    fn detects_heic_inputs_case_insensitively() {
+        assert!(contains_heic(&["C:\\Photos\\IMG_1.HEIC".into()]));
+        assert!(contains_heic(&["photo.heif".into()]));
+        assert!(!contains_heic(&["photo.jpg".into(), "clip.mov".into()]));
+    }
+
+    #[test]
+    fn rejects_avif_metadata_only_when_images_are_selected() {
+        let mut settings = BatchSettings::default();
+        settings.image.format = ImageFormat::Avif;
+        settings.image.keep_metadata = true;
+
+        assert!(requests_unavailable_avif_metadata(
+            &["photo.jpg".into()],
+            &settings
+        ));
+        assert!(!requests_unavailable_avif_metadata(
+            &["clip.mov".into()],
+            &settings
+        ));
+        settings.image.keep_metadata = false;
+        assert!(!requests_unavailable_avif_metadata(
+            &["photo.jpg".into()],
+            &settings
+        ));
+    }
 
     #[test]
     fn derives_the_releases_page_from_the_update_endpoint() {
@@ -703,7 +798,10 @@ mod tests {
             .as_deref(),
             Some("https://github.com/someone/quick-media-organizer/releases")
         );
-        assert_eq!(releases_url_from_endpoint("https://example.com/feed.json"), None);
+        assert_eq!(
+            releases_url_from_endpoint("https://example.com/feed.json"),
+            None
+        );
     }
 
     #[test]
@@ -711,8 +809,14 @@ mod tests {
         // build.rs resolves this from CI or the git remote; a checkout without
         // either simply has no link to show.
         if let Some(url) = option_env!("QMO_REPOSITORY_URL") {
-            assert!(url.starts_with("https://"), "unexpected repository url: {url}");
-            assert!(!url.ends_with(".git"), "the .git suffix must be stripped: {url}");
+            assert!(
+                url.starts_with("https://"),
+                "unexpected repository url: {url}"
+            );
+            assert!(
+                !url.ends_with(".git"),
+                "the .git suffix must be stripped: {url}"
+            );
         }
     }
 }

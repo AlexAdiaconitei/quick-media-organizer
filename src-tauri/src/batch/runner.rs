@@ -12,12 +12,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::ffmpeg_args::{
-    classify_path, image_flags, output_extension, resolve_output_path, temp_output_path,
-    video_flags,
+    classify_path, image_flags, output_extension, output_file_name, resolve_output_path,
+    temp_output_path, video_flags,
 };
 use super::{
-    AudioMode, BatchItemState, BatchItemStatus, BatchJobStatus, BatchMediaType, BatchProgressSummary,
-    BatchReplacement, BatchSettings, OutputMode,
+    AudioMode, BatchItemState, BatchItemStatus, BatchJobStatus, BatchMediaType,
+    BatchProgressSummary, BatchReplacement, BatchSettings, ConflictPolicy, OutputMode,
 };
 use crate::fs_util::{apply_timestamps, read_timestamps};
 use crate::path_util::{is_path_inside_root, APP_FOLDER_NAME};
@@ -132,6 +132,10 @@ impl FfmpegEncoder {
             tools: FfmpegTools::locate()?,
         })
     }
+
+    pub fn capabilities(&self) -> crate::batch::FfmpegCapabilities {
+        self.tools.capabilities()
+    }
 }
 
 impl MediaEncoder for FfmpegEncoder {
@@ -173,6 +177,9 @@ pub struct EncodePlan {
     pub media_type: BatchMediaType,
     pub replace_original: bool,
     pub backup: bool,
+    /// A different file already occupying `final_output`. Overwrite is allowed
+    /// only after this file has its own backup and rollback path.
+    pub overwritten_target: Option<PathBuf>,
 }
 
 pub struct PlannedItem {
@@ -283,7 +290,7 @@ fn build_plan(
         .ok_or_else(|| "File has no parent folder.".to_string())?
         .to_path_buf();
 
-    let (final_output, replace_original, backup) = match &settings.output {
+    let (final_output, replace_original, backup, overwritten_target) = match &settings.output {
         OutputMode::ReplaceOriginal { backup, confirmed } => {
             if !confirmed {
                 return Err(
@@ -291,7 +298,44 @@ fn build_plan(
                         .into(),
                 );
             }
-            (source.with_extension(&ext), true, *backup)
+            let requested = source.with_extension(&ext);
+            if requested == source {
+                (requested, true, *backup, None)
+            } else {
+                let reserved_collision = reserved.iter().any(|taken| taken == &requested);
+                if reserved_collision && settings.on_conflict == ConflictPolicy::Overwrite {
+                    return Err(format!(
+                        "Two selected files resolve to the same output: {}.",
+                        requested.display()
+                    ));
+                }
+
+                let occupied = requested.exists() || reserved_collision;
+                match (occupied, settings.on_conflict) {
+                    (false, _) => (requested, true, *backup, None),
+                    (true, ConflictPolicy::Skip) => {
+                        return Ok(PlanOutcome::Skip("A converted file already exists.".into()));
+                    }
+                    (true, ConflictPolicy::Rename) => {
+                        let exists = |candidate: &Path| {
+                            candidate.exists() || reserved.iter().any(|taken| taken == candidate)
+                        };
+                        let resolved = resolve_output_path(
+                            source,
+                            &source_dir,
+                            &ext,
+                            None,
+                            ConflictPolicy::Rename,
+                            &exists,
+                        )?
+                        .ok_or_else(|| "Could not resolve a replacement name.".to_string())?;
+                        (resolved, true, *backup, None)
+                    }
+                    (true, ConflictPolicy::Overwrite) => {
+                        (requested.clone(), true, *backup, Some(requested))
+                    }
+                }
+            }
         }
         mode => {
             let dest_dir = match mode {
@@ -310,6 +354,20 @@ fn build_plan(
             fs::create_dir_all(&dest_dir)
                 .map_err(|e| format!("Cannot create {}: {e}", dest_dir.display()))?;
 
+            let requested = dest_dir.join(output_file_name(
+                source,
+                &ext,
+                settings.name_suffix.as_deref(),
+            ));
+            if settings.on_conflict == ConflictPolicy::Overwrite
+                && reserved.iter().any(|taken| taken == &requested)
+            {
+                return Err(format!(
+                    "Two selected files resolve to the same output: {}.",
+                    requested.display()
+                ));
+            }
+
             let exists = |candidate: &Path| {
                 candidate.exists() || reserved.iter().any(|taken| taken == candidate)
             };
@@ -322,11 +380,9 @@ fn build_plan(
                 &exists,
             )?
             else {
-                return Ok(PlanOutcome::Skip(
-                    "A converted file already exists.".into(),
-                ));
+                return Ok(PlanOutcome::Skip("A converted file already exists.".into()));
             };
-            (resolved, false, false)
+            (resolved, false, false, None)
         }
     };
 
@@ -339,6 +395,7 @@ fn build_plan(
         media_type,
         replace_original,
         backup,
+        overwritten_target,
     })))
 }
 
@@ -545,7 +602,7 @@ fn finalize_output<E: MediaEncoder>(
     encoder: &E,
     job: &Arc<Mutex<BatchJobStatus>>,
 ) -> Result<ItemOutcome, String> {
-    let size_after = fs::metadata(&plan.temp_output)
+    let mut size_after = fs::metadata(&plan.temp_output)
         .map_err(|e| format!("Converted file missing: {e}"))?
         .len();
     if size_after == 0 {
@@ -555,14 +612,18 @@ fn finalize_output<E: MediaEncoder>(
 
     // ffmpeg writes no EXIF for stills, so the block is carried over by hand.
     // Done before the size rules so the saving reported to the user counts it,
-    // and never fatal: losing the tags is not worth losing the conversion.
+    // A rewrite error is fatal when metadata preservation was requested. A
+    // source without EXIF is still valid and returns Ok(false).
     if plan.media_type == BatchMediaType::Image && settings.image.keep_metadata {
-        if let Err(error) = crate::metadata::copy_exif(&plan.input, &plan.temp_output) {
-            eprintln!("[QMO][batch] could not carry EXIF over: {error}");
-        }
+        crate::metadata::copy_exif(&plan.input, &plan.temp_output)
+            .map_err(|error| format!("Could not preserve image metadata: {error}"))?;
+        size_after = fs::metadata(&plan.temp_output)
+            .map_err(|e| format!("Converted file missing after metadata copy: {e}"))?
+            .len();
     }
 
-    if plan.media_type == BatchMediaType::Video && encoder.probe_duration(&plan.temp_output).is_none()
+    if plan.media_type == BatchMediaType::Video
+        && encoder.probe_duration(&plan.temp_output).is_none()
     {
         let _ = fs::remove_file(&plan.temp_output);
         return Err("Converted video could not be read back.".into());
@@ -600,6 +661,27 @@ fn finalize_output<E: MediaEncoder>(
         None
     };
 
+    let target_backup_path = if let Some(target) = &plan.overwritten_target {
+        let path = backup_path_for(target);
+        if let Some(parent) = path.parent() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                if let Some(backup) = &backup_path {
+                    let _ = fs::remove_file(backup);
+                }
+                return Err(format!("Cannot create target backup folder: {error}"));
+            }
+        }
+        if let Err(error) = fs::copy(target, &path) {
+            if let Some(backup) = &backup_path {
+                let _ = fs::remove_file(backup);
+            }
+            return Err(format!("Could not back up the existing output: {error}"));
+        }
+        Some(path)
+    } else {
+        None
+    };
+
     // The original is moved aside, never deleted outright: until the converted
     // file is in place there has to be a copy on disk to put back. Deleting
     // first left a window where a failing rename lost the file for good.
@@ -609,13 +691,42 @@ fn finalize_output<E: MediaEncoder>(
         if let Some(backup) = &backup_path {
             let _ = fs::remove_file(backup);
         }
+        if let Some(backup) = &target_backup_path {
+            let _ = fs::remove_file(backup);
+        }
         return Err(format!("Could not move the original aside: {error}"));
     }
 
+    let displaced_target = if let Some(target) = &plan.overwritten_target {
+        let displaced_target = displaced_path_for(target);
+        if let Err(error) = fs::rename(target, &displaced_target) {
+            let _ = fs::rename(&displaced, &plan.input);
+            let _ = fs::remove_file(&plan.temp_output);
+            if let Some(backup) = &backup_path {
+                let _ = fs::remove_file(backup);
+            }
+            if let Some(backup) = &target_backup_path {
+                let _ = fs::remove_file(backup);
+            }
+            return Err(format!("Could not move the existing output aside: {error}"));
+        }
+        Some(displaced_target)
+    } else {
+        None
+    };
+
     if let Err(error) = fs::rename(&plan.temp_output, &plan.final_output) {
         // Put the original back before reporting the failure.
+        if let (Some(target), Some(displaced_target)) =
+            (&plan.overwritten_target, &displaced_target)
+        {
+            let _ = fs::rename(displaced_target, target);
+        }
         let _ = fs::rename(&displaced, &plan.input);
         if let Some(backup) = &backup_path {
+            let _ = fs::remove_file(backup);
+        }
+        if let Some(backup) = &target_backup_path {
             let _ = fs::remove_file(backup);
         }
         let _ = fs::remove_file(&plan.temp_output);
@@ -623,14 +734,26 @@ fn finalize_output<E: MediaEncoder>(
     }
 
     let _ = fs::remove_file(&displaced);
+    if let Some(displaced_target) = &displaced_target {
+        let _ = fs::remove_file(displaced_target);
+    }
 
-    if let Some(backup) = backup_path {
+    if backup_path.is_some() || target_backup_path.is_some() {
         if let Ok(mut guard) = job.lock() {
-            guard.replacements.push(BatchReplacement {
-                backup_path: backup.to_string_lossy().to_string(),
-                original_path: plan.input.to_string_lossy().to_string(),
-                converted_path: plan.final_output.to_string_lossy().to_string(),
-            });
+            if let Some(backup) = backup_path {
+                guard.replacements.push(BatchReplacement {
+                    backup_path: backup.to_string_lossy().to_string(),
+                    original_path: plan.input.to_string_lossy().to_string(),
+                    converted_path: plan.final_output.to_string_lossy().to_string(),
+                });
+            }
+            if let (Some(target), Some(backup)) = (&plan.overwritten_target, target_backup_path) {
+                guard.replacements.push(BatchReplacement {
+                    backup_path: backup.to_string_lossy().to_string(),
+                    original_path: target.to_string_lossy().to_string(),
+                    converted_path: target.to_string_lossy().to_string(),
+                });
+            }
         }
     }
 
@@ -684,10 +807,7 @@ pub fn backup_path_for(source: &Path) -> PathBuf {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("media");
-    let ext = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("bin");
+    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("bin");
     let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S_%f");
     dir.join(format!("{stem}_{stamp}.{ext}"))
 }
@@ -730,11 +850,7 @@ fn emit_progress<V: BatchEvents>(job: &Arc<Mutex<BatchJobStatus>>, events: &V) {
     }
 }
 
-fn finish_job<V: BatchEvents>(
-    job: &Arc<Mutex<BatchJobStatus>>,
-    cancel: &AtomicBool,
-    events: &V,
-) {
+fn finish_job<V: BatchEvents>(job: &Arc<Mutex<BatchJobStatus>>, cancel: &AtomicBool, events: &V) {
     let snapshot = {
         let Ok(mut guard) = job.lock() else {
             return;
@@ -744,7 +860,10 @@ fn finish_job<V: BatchEvents>(
         guard.finished_at = Some(chrono::Local::now().to_rfc3339());
         if guard.cancelled {
             for item in guard.items.iter_mut() {
-                if matches!(item.state, BatchItemState::Pending | BatchItemState::Running) {
+                if matches!(
+                    item.state,
+                    BatchItemState::Pending | BatchItemState::Running
+                ) {
                     item.state = BatchItemState::Cancelled;
                 }
             }
@@ -967,11 +1086,7 @@ mod tests {
         );
 
         assert_eq!(job.skipped, 1);
-        assert!(job.items[0]
-            .error
-            .as_deref()
-            .unwrap()
-            .contains("threshold"));
+        assert!(job.items[0].error.as_deref().unwrap().contains("threshold"));
     }
 
     #[test]
@@ -1000,6 +1115,87 @@ mod tests {
         assert!(Path::new(&replacement.backup_path).is_file());
         assert_eq!(replacement.original_path, a);
         assert_ne!(replacement.converted_path, replacement.original_path);
+    }
+
+    #[test]
+    fn replace_original_rename_keeps_an_existing_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write_source(dir.path(), "photo.heic", 1000);
+        let existing = write_source(dir.path(), "photo.jpg", 700);
+
+        let mut settings = image_settings(OutputMode::ReplaceOriginal {
+            backup: true,
+            confirmed: true,
+        });
+        settings.image.format = ImageFormat::Jpeg;
+        settings.on_conflict = ConflictPolicy::Rename;
+
+        let (job, _) = run(
+            vec![source],
+            settings,
+            FakeEncoder::new(200),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.done, 1);
+        assert_eq!(fs::metadata(existing).unwrap().len(), 700);
+        assert!(dir.path().join("photo (2).jpg").is_file());
+    }
+
+    #[test]
+    fn replace_original_skip_keeps_both_files_when_target_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write_source(dir.path(), "photo.heic", 1000);
+        let existing = write_source(dir.path(), "photo.jpg", 700);
+
+        let mut settings = image_settings(OutputMode::ReplaceOriginal {
+            backup: true,
+            confirmed: true,
+        });
+        settings.image.format = ImageFormat::Jpeg;
+        settings.on_conflict = ConflictPolicy::Skip;
+
+        let (job, _) = run(
+            vec![source.clone()],
+            settings,
+            FakeEncoder::new(200),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.skipped, 1);
+        assert_eq!(fs::metadata(source).unwrap().len(), 1000);
+        assert_eq!(fs::metadata(existing).unwrap().len(), 700);
+    }
+
+    #[test]
+    fn replace_original_overwrite_preserves_the_displaced_target_for_undo() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write_source(dir.path(), "photo.heic", 1000);
+        let existing = write_source(dir.path(), "photo.jpg", 700);
+
+        let mut settings = image_settings(OutputMode::ReplaceOriginal {
+            backup: true,
+            confirmed: true,
+        });
+        settings.image.format = ImageFormat::Jpeg;
+        settings.on_conflict = ConflictPolicy::Overwrite;
+
+        let (job, _) = run(
+            vec![source],
+            settings,
+            FakeEncoder::new(200),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.done, 1);
+        assert_eq!(fs::metadata(existing).unwrap().len(), 200);
+        assert_eq!(job.replacements.len(), 2);
+        let target_backup = job
+            .replacements
+            .iter()
+            .find(|replacement| replacement.original_path.ends_with("photo.jpg"))
+            .expect("the overwritten target has its own undo record");
+        assert_eq!(fs::metadata(&target_backup.backup_path).unwrap().len(), 700);
     }
 
     #[test]
@@ -1119,6 +1315,36 @@ mod tests {
         assert_eq!(job.done, 2);
         assert!(dir.path().join("out/IMG_1.jpg").is_file());
         assert!(dir.path().join("out/IMG_1 (2).jpg").is_file());
+    }
+
+    #[test]
+    fn duplicate_overwrite_outputs_fail_instead_of_racing() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub_a = dir.path().join("a");
+        let sub_b = dir.path().join("b");
+        fs::create_dir_all(&sub_a).unwrap();
+        fs::create_dir_all(&sub_b).unwrap();
+        let a = write_source(&sub_a, "IMG_1.jpg", 1000);
+        let b = write_source(&sub_b, "IMG_1.jpg", 1000);
+
+        let mut settings = image_settings(OutputMode::CustomFolder {
+            path: dir.path().join("out").to_string_lossy().to_string(),
+        });
+        settings.on_conflict = ConflictPolicy::Overwrite;
+
+        let (job, _) = run(
+            vec![a, b],
+            settings,
+            FakeEncoder::new(100),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.done, 1);
+        assert_eq!(job.failed, 1);
+        assert!(job.items[1]
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("same output")));
     }
 
     #[test]
