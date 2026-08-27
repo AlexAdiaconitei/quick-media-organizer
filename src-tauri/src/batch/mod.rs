@@ -14,25 +14,21 @@ pub enum BatchMediaType {
     Image,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum VideoCodec {
     H264,
+    #[default]
     H265,
     Av1,
     /// Stream copy: only remux (fast, lossless, small savings).
     Copy,
 }
 
-impl Default for VideoCodec {
-    fn default() -> Self {
-        Self::H265
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFormat {
+    #[default]
     Jpeg,
     Webp,
     Avif,
@@ -41,38 +37,22 @@ pub enum ImageFormat {
     Keep,
 }
 
-impl Default for ImageFormat {
-    fn default() -> Self {
-        Self::Jpeg
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioMode {
     Copy,
+    #[default]
     Aac,
     Drop,
 }
 
-impl Default for AudioMode {
-    fn default() -> Self {
-        Self::Aac
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ConflictPolicy {
     Skip,
+    #[default]
     Rename,
     Overwrite,
-}
-
-impl Default for ConflictPolicy {
-    fn default() -> Self {
-        Self::Rename
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

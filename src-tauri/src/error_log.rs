@@ -17,6 +17,12 @@ pub struct ErrorEntry {
     pub stack: Option<String>,
 }
 
+/// The log is a debugging aid, not an audit trail: it keeps the most recent
+/// entries and forgets the rest, so a long session cannot grow it without
+/// bound in memory or on disk.
+const MAX_ENTRIES: usize = 500;
+const MAX_LOG_BYTES: u64 = 1_000_000;
+
 pub struct ErrorLog {
     paths: Vec<PathBuf>,
     entries: Mutex<Vec<ErrorEntry>>,
@@ -80,14 +86,43 @@ impl ErrorLog {
             writeln!(file, "{line}").map_err(|e| e.to_string())?;
         }
 
-        self.entries
-            .lock()
-            .map_err(|e| e.to_string())?
-            .push(entry.clone());
+        {
+            let mut entries = self.entries.lock().map_err(|e| e.to_string())?;
+            entries.push(entry.clone());
+            if entries.len() > MAX_ENTRIES {
+                let overflow = entries.len() - MAX_ENTRIES;
+                entries.drain(0..overflow);
+            }
+            self.rotate_oversized_files(&entries);
+        }
 
-        eprintln!("[QPO][{}] {}: {}", entry.source, entry.level, entry.message);
+        eprintln!("[QMO][{}] {}: {}", entry.source, entry.level, entry.message);
 
         Ok(entry)
+    }
+
+    /// Rewrites any log file that outgrew the cap from the entries still held
+    /// in memory. Best effort: a log that cannot be trimmed is not worth
+    /// failing the command that reported the error.
+    fn rotate_oversized_files(&self, entries: &[ErrorEntry]) {
+        let oversized = self
+            .paths
+            .iter()
+            .any(|path| fs::metadata(path).map(|meta| meta.len()).unwrap_or(0) > MAX_LOG_BYTES);
+        if !oversized {
+            return;
+        }
+
+        let mut content = String::new();
+        for entry in entries {
+            if let Ok(line) = serde_json::to_string(entry) {
+                content.push_str(&line);
+                content.push('\n');
+            }
+        }
+        for path in &self.paths {
+            let _ = fs::write(path, &content);
+        }
     }
 
     pub fn list(&self) -> Result<Vec<ErrorEntry>, String> {
@@ -125,7 +160,7 @@ impl ErrorLog {
             Err(_) => return Vec::new(),
         };
 
-        content
+        let mut entries: Vec<ErrorEntry> = content
             .lines()
             .filter_map(|line| {
                 let trimmed = line.trim();
@@ -134,7 +169,13 @@ impl ErrorLog {
                 }
                 serde_json::from_str(trimmed).ok()
             })
-            .collect()
+            .collect();
+
+        if entries.len() > MAX_ENTRIES {
+            let overflow = entries.len() - MAX_ENTRIES;
+            entries.drain(0..overflow);
+        }
+        entries
     }
 }
 

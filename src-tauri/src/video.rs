@@ -481,6 +481,9 @@ pub fn resolve_video_preview(source: &Path, cache_dir: &Path) -> VideoPreviewInf
     let poster_path = cache_dir.join(format!("{cache_key}.jpg"));
 
     if proxy_path.is_file() {
+        // Touched on use so eviction drops the least recently *used* proxy,
+        // not merely the oldest one built.
+        let _ = filetime::set_file_mtime(&proxy_path, filetime::FileTime::now());
         return VideoPreviewInfo {
             playback_path: proxy_path.to_string_lossy().to_string(),
             poster_path: poster_path.is_file().then(|| poster_path.to_string_lossy().to_string()),
@@ -500,6 +503,7 @@ pub fn resolve_video_preview(source: &Path, cache_dir: &Path) -> VideoPreviewInf
 
     if tools.remux_for_web_preview(source, &proxy_path).is_ok() {
         let _ = tools.capture_poster_frame(source, &poster_path);
+        prune_preview_cache(cache_dir, PREVIEW_CACHE_MAX_BYTES);
         return VideoPreviewInfo {
             playback_path: proxy_path.to_string_lossy().to_string(),
             poster_path: poster_path.is_file().then(|| poster_path.to_string_lossy().to_string()),
@@ -514,6 +518,47 @@ pub fn resolve_video_preview(source: &Path, cache_dir: &Path) -> VideoPreviewInf
         poster_path: poster,
         preview_mode: VideoPreviewMode::Unavailable,
         hint: None,
+    }
+}
+
+/// Proxies are disposable — rebuilding one costs a single remux — so the cache
+/// is capped and the least recently used files are dropped. Without this it
+/// grows by one copy of every non-MP4 video the user ever looked at.
+const PREVIEW_CACHE_MAX_BYTES: u64 = 1_500_000_000;
+
+fn prune_preview_cache(cache_dir: &Path, max_bytes: u64) {
+    let Ok(entries) = fs::read_dir(cache_dir) else {
+        return;
+    };
+
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            Some((
+                meta.modified().unwrap_or(UNIX_EPOCH),
+                meta.len(),
+                entry.path(),
+            ))
+        })
+        .collect();
+
+    let mut total: u64 = files.iter().map(|(_, len, _)| *len).sum();
+    if total <= max_bytes {
+        return;
+    }
+
+    files.sort_by_key(|(modified, _, _)| *modified);
+    for (_, len, path) in files {
+        if total <= max_bytes {
+            break;
+        }
+        if fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(len);
+        }
     }
 }
 

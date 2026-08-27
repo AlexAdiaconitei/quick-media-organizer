@@ -76,6 +76,20 @@ pub fn execute_moves(sources: &[PathBuf], dest_names: &[String], dest_dir: &Path
     Ok(completed)
 }
 
+/// A rename that crossed a volume boundary, so the caller can fall back to
+/// copy + delete.
+///
+/// The codes are per-platform and do not overlap: Windows reports
+/// `ERROR_NOT_SAME_DEVICE` (17) from `MoveFileExW`, while Unix reports `EXDEV`
+/// (18 on Linux/macOS, 152 on Solaris-likes). Matching them all everywhere
+/// would be wrong -- 18 on Windows is `ERROR_NO_MORE_FILES`.
 fn is_cross_device(err: &io::Error) -> bool {
-    matches!(err.raw_os_error(), Some(18) | Some(152))
+    #[cfg(windows)]
+    {
+        matches!(err.raw_os_error(), Some(17))
+    }
+    #[cfg(not(windows))]
+    {
+        matches!(err.raw_os_error(), Some(18) | Some(152))
+    }
 }

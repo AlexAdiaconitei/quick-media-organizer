@@ -23,6 +23,16 @@ pub fn is_video_extension(ext: &str) -> bool {
     VIDEO_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str())
 }
 
+/// Skips an ignored folder *and everything under it*, so the app's own
+/// `.quick-media-organizer/trim-backups` never shows up as a destination.
+fn keeps_walking(entry: &walkdir::DirEntry) -> bool {
+    entry.depth() == 0
+        || !entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| IGNORED_DIRS.contains(&name))
+}
+
 pub fn list_subfolders(root: &Path) -> Vec<String> {
     let mut folders = Vec::new();
 
@@ -33,22 +43,14 @@ pub fn list_subfolders(root: &Path) -> Vec<String> {
     for entry in WalkDir::new(root)
         .min_depth(1)
         .into_iter()
+        .filter_entry(keeps_walking)
         .filter_map(Result::ok)
     {
         if !entry.file_type().is_dir() {
             continue;
         }
 
-        let path = entry.path();
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|name| IGNORED_DIRS.contains(&name))
-        {
-            continue;
-        }
-
-        if let Ok(relative) = path.strip_prefix(root) {
+        if let Ok(relative) = entry.path().strip_prefix(root) {
             folders.push(relative.to_string_lossy().replace('\\', "/"));
         }
     }
@@ -58,31 +60,16 @@ pub fn list_subfolders(root: &Path) -> Vec<String> {
     folders
 }
 
+/// Media the queue is missing while "include subfolders" is off: everything
+/// below `root` at any depth, skipping the app's own folders.
 pub fn count_root_subfolder_media(root: &Path) -> usize {
-    let mut count = 0usize;
-    if let Ok(entries) = fs::read_dir(root) {
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            if path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| IGNORED_DIRS.contains(&name))
-            {
-                continue;
-            }
-            if let Ok(sub) = fs::read_dir(&path) {
-                for file in sub.filter_map(Result::ok) {
-                    if file.path().is_file() && is_supported_file(&file.path()) {
-                        count += 1;
-                    }
-                }
-            }
-        }
-    }
-    count
+    WalkDir::new(root)
+        .min_depth(2)
+        .into_iter()
+        .filter_entry(keeps_walking)
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file() && is_supported_file(entry.path()))
+        .count()
 }
 
 pub fn scan_folder(root: &Path, recursive: bool) -> Result<Vec<MediaItem>, String> {
@@ -107,7 +94,11 @@ pub fn scan_folder(root: &Path, recursive: bool) -> Result<Vec<MediaItem>, Strin
                 files.push(path.to_path_buf());
             }
         }
-    } else if let Ok(entries) = fs::read_dir(root) {
+    } else {
+        // Reported rather than swallowed: an unreadable folder must not look
+        // like an empty one.
+        let entries = fs::read_dir(root)
+            .map_err(|e| format!("Cannot read {}: {e}", root.display()))?;
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
             if path.is_file() && is_supported_file(&path) {
@@ -141,7 +132,7 @@ pub fn enrich_exif_dates_for_sort(items: &mut [MediaItem]) {
     });
 }
 
-pub fn prepare_sorted_items(items: &mut Vec<MediaItem>, mode: SortMode) {
+pub fn prepare_sorted_items(items: &mut [MediaItem], mode: SortMode) {
     if mode == SortMode::ExifDate {
         enrich_exif_dates_for_sort(items);
     }
@@ -397,10 +388,10 @@ fn read_exif_fields(path: &Path) -> ExifFields {
                 exif_date = Some(field.display_value().to_string());
             }
             if let Some(field) = exif.get_field(exif::Tag::PixelXDimension, exif::In::PRIMARY) {
-                width = field.value.get_uint(0).map(|v| v as u32);
+                width = field.value.get_uint(0);
             }
             if let Some(field) = exif.get_field(exif::Tag::PixelYDimension, exif::In::PRIMARY) {
-                height = field.value.get_uint(0).map(|v| v as u32);
+                height = field.value.get_uint(0);
             }
         }
     }

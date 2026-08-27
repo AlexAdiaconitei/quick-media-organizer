@@ -113,7 +113,7 @@ function extract(archive, into) {
   // remote host.
   const tarBin =
     process.platform === "win32"
-      ? join(process.env.SystemRoot ?? "C:\Windows", "System32", "tar.exe")
+      ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe")
       : "tar";
   execFileSync(tarBin, ["-xf", archive, "-C", into], { stdio: "inherit" });
 }
@@ -193,10 +193,14 @@ ${readFileSync(licensePath, "utf8")}` : notice,
   process.stdout.write("FFmpeg is ready to be bundled.\n");
 }
 
-main().catch((error) => {
-  rmSync(TMP_DIR, { recursive: true, force: true });
-  process.stderr.write(`${error.message}\n`);
-  process.exitCode = 1;
-});
+// Only when run as a script: the exports below are imported by tests, and an
+// import must not kick off a 100 MB download.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    rmSync(TMP_DIR, { recursive: true, force: true });
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  });
+}
 
 export { RELEASES, platformKey };

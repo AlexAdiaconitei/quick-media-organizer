@@ -252,13 +252,18 @@ pub fn set_options(
     Ok(guard.to_frontend_state())
 }
 
+/// Building a proxy runs ffmpeg, which takes seconds on a large clip, so the
+/// app-state mutex is released before that starts: holding it would freeze
+/// every other command for the duration.
 #[tauri::command]
 pub fn resolve_video_preview(
     state: State<'_, SharedState>,
     path: String,
 ) -> Result<crate::models::VideoPreviewInfo, String> {
-    let guard = state.lock().map_err(|e| e.to_string())?;
-    let cache_dir = guard.app_data_dir.join("video-previews");
+    let cache_dir = {
+        let guard = state.lock().map_err(|e| e.to_string())?;
+        guard.app_data_dir.join("video-previews")
+    };
     Ok(crate::video::resolve_video_preview(
         Path::new(&path),
         &cache_dir,
@@ -339,7 +344,7 @@ pub fn describe_media_paths(paths: Vec<String>) -> Result<Vec<MediaItem>, String
         .iter()
         .filter(|path| Path::new(path).is_file())
         .map(|path| {
-            let mut item = crate::media::build_media_item_from_paths(&[path.clone()]);
+            let mut item = crate::media::build_media_item_from_paths(std::slice::from_ref(path));
             crate::media::enrich_item_metadata(&mut item);
             item
         })

@@ -33,9 +33,15 @@ pub type SharedBatchState = Mutex<BatchRunner>;
 pub struct BatchRunner {
     jobs: HashMap<String, Arc<Mutex<BatchJobStatus>>>,
     cancels: HashMap<String, Arc<AtomicBool>>,
+    /// Registration order, so the oldest job is the one that gets forgotten.
+    order: Vec<String>,
     active: Option<String>,
     counter: u64,
 }
+
+/// Finished jobs are kept so the panel can re-attach after a window reload,
+/// but each one holds a status entry per file: only the most recent few stay.
+const MAX_REMEMBERED_JOBS: usize = 4;
 
 impl BatchRunner {
     pub fn new() -> Self {
@@ -64,6 +70,15 @@ impl BatchRunner {
         self.jobs.insert(job_id.to_string(), job);
         self.cancels.insert(job_id.to_string(), cancel);
         self.active = Some(job_id.to_string());
+
+        self.order.retain(|id| id != job_id);
+        self.order.push(job_id.to_string());
+        // The job just registered is last, so it is never the one dropped.
+        while self.order.len() > MAX_REMEMBERED_JOBS {
+            let oldest = self.order.remove(0);
+            self.jobs.remove(&oldest);
+            self.cancels.remove(&oldest);
+        }
     }
 
     pub fn job(&self, job_id: &str) -> Option<Arc<Mutex<BatchJobStatus>>> {
@@ -576,23 +591,29 @@ fn finalize_output<E: MediaEncoder>(
         None
     };
 
-    if let Err(error) = fs::remove_file(&plan.input) {
+    // The original is moved aside, never deleted outright: until the converted
+    // file is in place there has to be a copy on disk to put back. Deleting
+    // first left a window where a failing rename lost the file for good.
+    let displaced = displaced_path_for(&plan.input);
+    if let Err(error) = fs::rename(&plan.input, &displaced) {
         let _ = fs::remove_file(&plan.temp_output);
         if let Some(backup) = &backup_path {
             let _ = fs::remove_file(backup);
         }
-        return Err(format!("Could not remove the original: {error}"));
+        return Err(format!("Could not move the original aside: {error}"));
     }
 
     if let Err(error) = fs::rename(&plan.temp_output, &plan.final_output) {
         // Put the original back before reporting the failure.
+        let _ = fs::rename(&displaced, &plan.input);
         if let Some(backup) = &backup_path {
-            let _ = fs::copy(backup, &plan.input);
             let _ = fs::remove_file(backup);
         }
         let _ = fs::remove_file(&plan.temp_output);
         return Err(format!("Could not replace the original: {error}"));
     }
+
+    let _ = fs::remove_file(&displaced);
 
     if let Some(backup) = backup_path {
         if let Ok(mut guard) = job.lock() {
@@ -630,6 +651,18 @@ fn savings_rejection(
         }
     }
     None
+}
+
+/// Hidden sibling that holds the original while its replacement is put in
+/// place. Same folder, so the move is a rename and cannot half-succeed.
+fn displaced_path_for(source: &Path) -> PathBuf {
+    let dir = source.parent().unwrap_or_else(|| Path::new("."));
+    let name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("media");
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S_%f");
+    dir.join(format!(".qmo-replacing-{stamp}-{name}"))
 }
 
 pub fn backup_path_for(source: &Path) -> PathBuf {
