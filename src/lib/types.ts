@@ -45,7 +45,10 @@ export interface FrontendState {
 
 export interface ActionResult {
   success: boolean;
-  message: string;
+  /// Names a message in i18n.ts; the backend never sends wording.
+  message_key: string;
+  message_args: Record<string, string>;
+  undo_history_trimmed: boolean;
   state: FrontendState;
 }
 

@@ -306,7 +306,7 @@ fn trimming_replaces_the_file_and_undo_restores_it() {
     state.open_folder(dir.path().to_path_buf()).unwrap();
 
     let result = state.trim_current_video(0.5, 1.5).unwrap();
-    assert!(result.success, "{}", result.message);
+    assert!(result.success, "{}", result.message_key);
 
     let after = encoder
         .probe_duration(&clip)
@@ -333,7 +333,7 @@ fn trimming_replaces_the_file_and_undo_restores_it() {
     assert_eq!(backups.len(), 1, "the original is kept once");
 
     let undone = state.undo_last().unwrap();
-    assert!(undone.success, "{}", undone.message);
+    assert!(undone.success, "{}", undone.message_key);
     let restored = encoder.probe_duration(&clip).unwrap();
     assert!(
         (restored - before).abs() < 0.3,

@@ -24,7 +24,7 @@ export async function reportError(
       stack: stack ?? null,
     });
   } catch {
-    console.error("[QPO]", message, context, stack);
+    console.error("[QMO]", message, context, stack);
   }
 }
 

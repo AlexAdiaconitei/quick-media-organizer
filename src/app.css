@@ -1390,6 +1390,11 @@ button:disabled {
   backdrop-filter: blur(2px);
 }
 
+.confirm-card {
+  width: min(440px, 92vw);
+  text-align: left;
+}
+
 .replace-confirm-card {
   width: min(620px, 94vw);
   text-align: left;

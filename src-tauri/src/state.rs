@@ -144,7 +144,7 @@ impl AppState {
 
         self.folder_path = Some(folder.clone());
         self.items = items;
-        self.sanitize_inflated_session_stats();
+        self.drop_legacy_undo_entries();
         if let Some(item) = self.current_item() {
             if self.is_item_processed(item) {
                 let start = (self.current_index + 1).min(self.items.len().saturating_sub(1));
@@ -173,6 +173,10 @@ impl AppState {
         Ok(())
     }
 
+    // Takes `&mut self` on purpose: rendering the state is also when the
+    // current item's EXIF is read and cached, so the name keeps the `to_`
+    // shape the callers expect.
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_frontend_state(&mut self) -> FrontendState {
         if let Some(item) = self.items.get_mut(self.current_index) {
             enrich_item_metadata(item);
@@ -276,7 +280,7 @@ impl AppState {
 
         let feedback = sanitize_with_feedback(name);
         if feedback.sanitized.is_empty() {
-            return Ok(self.fail("Write a name before pressing Enter."));
+            return Ok(self.fail("writeName"));
         }
 
         let item = self
@@ -312,10 +316,9 @@ impl AppState {
             })
             .collect();
 
-        let mut message = "Renamed".to_string();
-        if feedback.was_modified {
-            message = format!("Renamed (adjusted to \"{}\")", feedback.sanitized);
-        }
+        let adjusted_to = feedback
+            .was_modified
+            .then(|| feedback.sanitized.clone());
 
         self.push_undo(UndoAction::Rename {
             moves: undo_moves,
@@ -324,7 +327,10 @@ impl AppState {
         });
         self.stats.renamed += 1;
         self.refresh_after_rename(old_index, &new_paths)?;
-        Ok(self.ok(&message))
+        Ok(match adjusted_to {
+            Some(name) => self.ok_with("action.renamedAdjusted", vec![("name", name)]),
+            None => self.ok("action.renamed"),
+        })
     }
 
     pub fn trash_current(&mut self) -> Result<ActionResult, String> {
@@ -357,7 +363,7 @@ impl AppState {
         });
         self.stats.trashed += 1;
         self.remove_current_from_queue()?;
-        Ok(self.ok("Moved to _deleted (not system Trash). Press Undo to restore."))
+        Ok(self.ok("action.trashed"))
     }
 
     pub fn move_current_to_folder(
@@ -420,7 +426,7 @@ impl AppState {
         self.stats.moved += 1;
         self.armed_folder = None;
         self.remove_current_from_queue()?;
-        Ok(self.ok("Saved to folder"))
+        Ok(self.ok("action.savedToFolder"))
     }
 
     pub fn trim_current_video(&mut self, trim_start: f64, trim_end: f64) -> Result<ActionResult, String> {
@@ -431,7 +437,7 @@ impl AppState {
             .ok_or("No media item selected")?;
 
         if !item.is_video {
-            return Ok(self.fail("Current item is not a video."));
+            return Ok(self.fail("action.notAVideo"));
         }
 
         let video_path = PathBuf::from(&item.paths[0]);
@@ -442,11 +448,11 @@ impl AppState {
         let trim_end = trim_end.min(duration);
 
         if trim_end <= trim_start + 0.05 {
-            return Ok(self.fail("Trim range is too short. Move the start/end markers apart."));
+            return Ok(self.fail("action.trimTooShort"));
         }
 
         if trim_start < 0.05 && (duration - trim_end) < 0.05 {
-            return Ok(self.fail("Nothing to trim — the full video is selected."));
+            return Ok(self.fail("action.trimNothing"));
         }
 
         let focus_paths = item.paths.clone();
@@ -489,7 +495,9 @@ impl AppState {
             return Err(format!("Failed to replace video file: {err}"));
         }
 
-        apply_timestamps(&video_path, &snap).map_err(|e| e.to_string())?;
+        // Best effort: the trim already succeeded and the backup is on disk, so
+        // failing here would leave a trimmed file with no way to undo it.
+        let _ = apply_timestamps(&video_path, &snap);
 
         self.push_undo(UndoAction::TrimVideo {
             moves: vec![PathPair {
@@ -504,7 +512,7 @@ impl AppState {
             refresh_item_size(item);
         }
         self.persist_session_best_effort();
-        Ok(self.ok("Video trimmed losslessly (no re-encoding)"))
+        Ok(self.ok("action.trimmed"))
     }
 
     pub fn undo_last(&mut self) -> Result<ActionResult, String> {
@@ -530,11 +538,6 @@ impl AppState {
                 focus_paths,
                 stat_kind,
             }
-            | UndoAction::FlattenToRoot {
-                moves,
-                focus_paths,
-                stat_kind,
-            }
             | UndoAction::TrimVideo {
                 moves,
                 focus_paths,
@@ -546,6 +549,14 @@ impl AppState {
                 stat_kind,
                 ..
             } => (moves.clone(), focus_paths.clone(), *stat_kind),
+
+            // Dropped when the session loads, so this is only reachable if the
+            // file changed underneath us. The feature that wrote them is gone,
+            // so there is nothing to put back.
+            UndoAction::LegacyFlattenToRoot { .. } => {
+                self.undo_stack.pop();
+                return Ok(self.fail("action.undoUnavailable"));
+            }
         };
 
         // A conversion that changed the extension left a second file behind
@@ -570,22 +581,16 @@ impl AppState {
         }
 
         self.undo_stack.pop();
-        if !matches!(action, UndoAction::FlattenToRoot { .. }) {
-            self.revert_stat(stat_kind);
-        }
+        self.revert_stat(stat_kind);
         self.unmark_paths(&focus_paths);
         for pair in &moves {
             self.unmark_path(&pair.from);
             self.unmark_path(&pair.to);
         }
         self.session_complete = false;
-        if matches!(action, UndoAction::FlattenToRoot { .. }) {
-            self.stats = SessionStats::default();
-            self.processed_paths.clear();
-        }
         self.apply_undo_to_queue(&action, &focus_paths, &moves);
         self.persist_session_best_effort();
-        Ok(self.ok("Undone"))
+        Ok(self.ok("action.undone"))
     }
 
     fn find_item_index_by_paths(&self, paths: &[String], items: &[MediaItem]) -> Option<usize> {
@@ -633,12 +638,7 @@ impl AppState {
         }
 
         let start = start.min(self.items.len().saturating_sub(1));
-        for index in start..self.items.len() {
-            if !self.is_item_processed(&self.items[index]) {
-                return Some(index);
-            }
-        }
-        None
+        (start..self.items.len()).find(|&index| !self.is_item_processed(&self.items[index]))
     }
 
     fn advance_after_processing(&mut self, from_index: usize, step_forward: bool) {
@@ -1003,23 +1003,7 @@ impl AppState {
                     self.mark_subfolders_dirty();
                 }
             }
-            UndoAction::FlattenToRoot { .. } => {
-                if let Some(folder) = self.folder_path.clone() {
-                    self.scan_recursive = true;
-                    self.items = scan_folder(&folder, true).unwrap_or_default();
-                    prepare_sorted_items(&mut self.items, self.sort_mode);
-                    if let Some(idx) = self.find_item_index_by_paths(focus_paths, &self.items) {
-                        self.current_index = idx;
-                    } else if self.items.is_empty() {
-                        self.current_index = 0;
-                    } else {
-                        self.current_index = self
-                            .current_index
-                            .min(self.items.len().saturating_sub(1));
-                    }
-                    self.mark_subfolders_dirty();
-                }
-            }
+            UndoAction::LegacyFlattenToRoot { .. } => {}
             UndoAction::ConvertMedia { .. } => {
                 self.rescan_preserving_position(focus_paths);
             }
@@ -1064,50 +1048,26 @@ impl AppState {
         }
     }
 
-    fn sanitize_inflated_session_stats(&mut self) {
-        let flatten_moves: u32 = self
+    /// Sessions written before 0.1.5 can carry "gather to root" undo entries.
+    /// The feature is gone, so they cannot be replayed: drop them and take
+    /// their moves back out of the counter they inflated.
+    fn drop_legacy_undo_entries(&mut self) {
+        let flattened: u32 = self
             .undo_stack
             .iter()
-            .filter_map(|action| {
-                if let UndoAction::FlattenToRoot { moves, .. } = action {
-                    Some(moves.len() as u32)
-                } else {
-                    None
-                }
+            .filter_map(|action| match action {
+                UndoAction::LegacyFlattenToRoot { moves, .. } => Some(moves.len() as u32),
+                _ => None,
             })
             .sum();
 
-        if flatten_moves > 0 && self.stats.moved >= flatten_moves {
-            self.stats.moved = self.stats.moved.saturating_sub(flatten_moves);
-        }
-
-        let queue_len = self.items.len();
-        let removed = self.stats.moved as usize + self.stats.trashed as usize;
-        if queue_len == 0 || removed == 0 {
+        if flattened == 0 {
             return;
         }
 
-        let apparent_total = queue_len + removed;
-        if apparent_total <= queue_len + queue_len / 20 || self.stats.moved as usize <= queue_len / 2 {
-            return;
-        }
-
-        let Some(folder) = self.folder_path.clone() else {
-            return;
-        };
-        let Ok(recursive_items) = scan_folder(&folder, true) else {
-            return;
-        };
-        let album_size = recursive_items.len();
-        if album_size == 0 || apparent_total <= album_size + album_size / 50 {
-            return;
-        }
-
-        let inflation = apparent_total.saturating_sub(album_size);
-        self.stats.moved = self
-            .stats
-            .moved
-            .saturating_sub(inflation.min(self.stats.moved as usize) as u32);
+        self.undo_stack
+            .retain(|action| !matches!(action, UndoAction::LegacyFlattenToRoot { .. }));
+        self.stats.moved = self.stats.moved.saturating_sub(flattened);
     }
 
     fn revert_stat(&mut self, kind: UndoStatKind) {
@@ -1157,23 +1117,32 @@ impl AppState {
         let _ = self.persist_session();
     }
 
-    fn ok(&mut self, message: &str) -> ActionResult {
-        let mut message = message.to_string();
-        if self.undo_overflow_notified {
-            message = format!("{message} (Older undo history was trimmed.)");
-            self.undo_overflow_notified = false;
-        }
-        ActionResult {
-            success: true,
-            message,
-            state: self.to_frontend_state(),
-        }
+    fn ok(&mut self, key: &str) -> ActionResult {
+        self.result(true, key, Vec::new())
     }
 
-    fn fail(&mut self, message: &str) -> ActionResult {
+    fn ok_with(&mut self, key: &str, args: Vec<(&str, String)>) -> ActionResult {
+        self.result(true, key, args)
+    }
+
+    fn fail(&mut self, key: &str) -> ActionResult {
+        self.result(false, key, Vec::new())
+    }
+
+    /// `key` indexes the UI's message table; the backend does not know the
+    /// user's language and must not compose the sentence itself.
+    fn result(&mut self, success: bool, key: &str, args: Vec<(&str, String)>) -> ActionResult {
+        let undo_history_trimmed = self.undo_overflow_notified;
+        self.undo_overflow_notified = false;
+
         ActionResult {
-            success: false,
-            message: message.to_string(),
+            success,
+            message_key: key.to_string(),
+            message_args: args
+                .into_iter()
+                .map(|(name, value)| (name.to_string(), value))
+                .collect(),
+            undo_history_trimmed,
             state: self.to_frontend_state(),
         }
     }

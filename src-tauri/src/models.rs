@@ -2,42 +2,30 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SortMode {
+    #[default]
     ExifDate,
     FileName,
     ModifiedDate,
 }
 
-impl Default for SortMode {
-    fn default() -> Self {
-        Self::ExifDate
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RenameMode {
+    #[default]
     Free,
     PrefixCounter,
 }
 
-impl Default for RenameMode {
-    fn default() -> Self {
-        Self::Free
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LayoutMode {
+    #[default]
     Sidebar,
     Bottom,
-}
-
-impl Default for LayoutMode {
-    fn default() -> Self {
-        Self::Sidebar
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -85,7 +73,6 @@ pub struct MediaFileDiagnosis {
     pub size_bytes: u64,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrontendState {
     pub folder_path: Option<String>,
@@ -121,10 +108,19 @@ pub struct SessionStats {
     pub skipped: u32,
 }
 
+/// Outcome of a user action. The backend never builds a user-facing sentence:
+/// it names a message and its placeholders, and the UI renders that in the
+/// user's language (see `src/lib/i18n.ts`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionResult {
     pub success: bool,
-    pub message: String,
+    pub message_key: String,
+    #[serde(default)]
+    pub message_args: std::collections::HashMap<String, String>,
+    /// The oldest undo entries were dropped to stay under the cap, and the UI
+    /// should say so alongside the message.
+    #[serde(default)]
+    pub undo_history_trimmed: bool,
     pub state: FrontendState,
 }
 
@@ -191,7 +187,12 @@ pub enum UndoAction {
         #[serde(default)]
         stat_kind: UndoStatKind,
     },
-    FlattenToRoot {
+    /// Written by the "gather to root" feature removed in 0.1.5. Never created
+    /// any more, but sessions saved by an older build still carry these, so the
+    /// variant stays deserializable. `AppState::open_folder` drops them from
+    /// the stack and takes their moves back out of the counter they inflated.
+    #[serde(rename = "flatten_to_root")]
+    LegacyFlattenToRoot {
         moves: Vec<PathPair>,
         #[serde(default)]
         focus_paths: Vec<String>,

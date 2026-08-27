@@ -17,6 +17,8 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "capture-screenshots": "node scripts/capture-screenshots.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "tauri": "tauri"
   },
   "license": "MIT",
@@ -35,6 +37,7 @@
     "svelte": "5.56.9",
     "svelte-check": "4.7.6",
     "typescript": "5.6.3",
-    "vite": "6.4.3"
+    "vite": "6.4.3",
+    "vitest": "^3.2.7"
   }
 }

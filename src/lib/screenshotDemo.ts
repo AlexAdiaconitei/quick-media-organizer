@@ -19,7 +19,10 @@ const MODES: ScreenshotMode[] = [
   "batch-done",
 ];
 
+/// Dev-only: `pnpm capture-screenshots` drives the dev server. A shipped build
+/// must never let a query string fake an album full of files that do not exist.
 export function getScreenshotMode(): ScreenshotMode | null {
+  if (!import.meta.env.DEV) return null;
   if (typeof window === "undefined") return null;
   const value = new URLSearchParams(window.location.search).get("screenshot");
   return MODES.includes(value as ScreenshotMode) ? (value as ScreenshotMode) : null;

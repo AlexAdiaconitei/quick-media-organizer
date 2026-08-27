@@ -8,7 +8,14 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Windows is the platform most users are on, so it is built here rather
+    # than discovered to be broken at tag time.
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,8 +27,11 @@ jobs:
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - name: Install Linux dependencies for Tauri
+        if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -34,12 +44,21 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # ffmpeg is what the batch smoke tests encode against; without it they
+      # skip themselves and the argument strings go unverified.
+      - name: Install FFmpeg (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: choco install ffmpeg -y --no-progress
+
       - name: Svelte/TypeScript check
         run: pnpm check
 
-      - name: Rust check
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Rust lints
         working-directory: src-tauri
-        run: cargo check
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Rust tests
         working-directory: src-tauri

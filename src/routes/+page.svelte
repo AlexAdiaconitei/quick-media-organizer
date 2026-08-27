@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import BatchPanel from "$lib/components/BatchPanel.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import FolderPicker from "$lib/components/FolderPicker.svelte";
   import HelpOverlay from "$lib/components/HelpOverlay.svelte";
   import MetadataPanel from "$lib/components/MetadataPanel.svelte";
@@ -21,7 +22,14 @@
     reportError,
   } from "$lib/errorReporter";
   import { defaultBatchSettings, matchingPreset, builtInPresets } from "$lib/batch";
-  import { detectLocale, format, t, type Locale } from "$lib/i18n";
+  import {
+    detectLocale,
+    format,
+    isLocale,
+    t,
+    translate,
+    type Locale,
+  } from "$lib/i18n";
   import {
     buildScreenshotBatchItems,
     buildScreenshotBatchJob,
@@ -79,6 +87,8 @@
     matchingPreset(builtInPresets(locale), quickSettings)?.id ?? null,
   );
   let showHelp = $state(false);
+  /// Pending yes/no question, rendered by `ConfirmDialog`.
+  let confirmPrompt = $state<{ message: string; onConfirm: () => void } | null>(null);
   let folderQuery = $state("");
   let folderSelection = $state<string | null>(null);
   let toastMessage = $state("");
@@ -229,7 +239,9 @@
 
     void (async () => {
       const settings = await invokeLogged<AppSettings>("get_app_settings");
-      locale = settings.locale === "es" ? "es" : detectLocale();
+      // A stored choice wins: detection is only for a first run. Reading it as
+      // "es or detect" meant picking English on a Spanish machine never stuck.
+      locale = isLocale(settings.locale) ? settings.locale : detectLocale();
       showWelcome = !settings.first_run_completed;
       showMetadata = settings.show_metadata ?? true;
       videoWithSound = settings.video_with_sound ?? false;
@@ -371,12 +383,17 @@
     let message =
       result.success && options.trimmed
         ? t(locale, "trim.savedWithRename")
-        : result.message;
+        : translate(locale, result.message_key, result.message_args);
     let duration = result.success ? 2200 : 8000;
 
-    if (result.success && result.message.toLowerCase().includes("_deleted")) {
+    // Keyed off what the action was, not off the wording it produced.
+    if (result.success && result.message_key === "action.trashed") {
       message = `${message} ${format(locale, "undoHint", { key: modLabel("Z") })}`;
       duration = 5000;
+    }
+
+    if (result.undo_history_trimmed) {
+      message = `${message} ${t(locale, "action.undoHistoryTrimmed")}`;
     }
 
     showToast(message, !result.success, duration);
@@ -385,7 +402,10 @@
     }
     focusRenameInput();
     if (!result.success) {
-      void reportError(result.message, { action: "command_result" });
+      void reportError(result.message_key, {
+        action: "command_result",
+        args: result.message_args,
+      });
     }
     void refreshErrorLogMeta();
   }
@@ -578,7 +598,16 @@
   function closeFolderPicker() {
     const dirty = folderQuery.trim() !== folderPickerInitialQuery.trim();
     if (dirty && folderQuery.trim()) {
-      if (!confirm(t(locale, "folderPicker.discard"))) return;
+      // `window.confirm` would block the webview and ignore the app's
+      // language; the answer comes back through `confirmPrompt` instead.
+      confirmPrompt = {
+        message: t(locale, "folderPicker.discard"),
+        onConfirm: () => {
+          confirmPrompt = null;
+          showFolderPicker = false;
+        },
+      };
+      return;
     }
     showFolderPicker = false;
   }
@@ -674,6 +703,10 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    // A pending question owns the keyboard until it is answered: both
+    // listeners sit on `window`, so the dialog cannot stop this one.
+    if (confirmPrompt) return;
+
     const target = event.target as HTMLElement | null;
     const inRenameInput =
       target?.id === "rename-input" ||
@@ -1139,5 +1172,13 @@
 />
 
 <HelpOverlay {locale} open={showHelp} {repositoryUrl} onClose={closeHelp} />
+
+<ConfirmDialog
+  {locale}
+  open={!!confirmPrompt}
+  message={confirmPrompt?.message ?? ""}
+  onConfirm={() => confirmPrompt?.onConfirm()}
+  onCancel={() => (confirmPrompt = null)}
+/>
 
 <Toast message={toastMessage} error={toastError} onDismiss={dismissToast} />
