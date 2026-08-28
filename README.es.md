@@ -160,12 +160,22 @@ Nada en la app apunta a un repositorio fijo: el endpoint de actualización se
 escribe al compilar a partir de `GITHUB_REPOSITORY` (o del remote `origin` si
 compilas en local), así que un fork se actualiza desde sus propias releases.
 
-Para activarlo, genera una vez el par de claves de firma y añade tres secrets
-al repositorio:
+#### Configurar GitHub Actions
+
+Genera una vez el par de claves de firma desde la raíz del repositorio:
 
 ```bash
 pnpm tauri signer generate -w .tauri/qmo.key
 ```
+
+Guarda una copia segura de `.tauri/qmo.key` y de su contraseña. No compartas la
+clave privada ni la subas al repositorio. Si la pierdes, no podrás publicar
+actualizaciones para quienes ya tengan instalada una versión que confíe en esa
+clave. El archivo `.tauri/qmo.key.pub` es público y se puede compartir.
+
+En la página del fork en GitHub, abre **Settings > Secrets and variables >
+Actions > Secrets**. Pulsa **New repository secret** y crea estos tres secrets
+del repositorio:
 
 | Secret | Valor |
 |---|---|
@@ -173,14 +183,45 @@ pnpm tauri signer generate -w .tauri/qmo.key
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | la contraseña que elijas |
 | `TAURI_SIGNING_PUBLIC_KEY` | contenido de `.tauri/qmo.key.pub` |
 
-Después publica un tag. Las releases sin esos secrets se siguen construyendo y
-publicando: simplemente salen sin actualizador integrado.
+Consulta la [documentación de secrets de
+GitHub](https://docs.github.com/es/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+si no aparece esa sección. Necesitas permisos de escritura sobre el repositorio.
+
+Después publica un tag. El workflow firma los artefactos, genera `latest.json`
+y comprueba que contiene Windows y macOS antes de hacer pública la release. Una
+release sin las dos claves de firma también se publica, pero no incluye el
+actualizador. Definir solo una de las dos claves hace que el workflow falle para
+evitar una release mal configurada.
+
+#### Probar una compilación firmada en local
+
+Tauri no lee estas claves desde archivos `.env`. En PowerShell, define las
+variables para la sesión actual y construye la versión Standard así:
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = ".tauri/qmo.key"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Read-Host "Contraseña de la clave"
+$env:TAURI_SIGNING_PUBLIC_KEY = (Get-Content -Raw .tauri/qmo.key.pub).Trim()
+node scripts/updater-config.mjs
+pnpm fetch-ffmpeg
+pnpm tauri build --config src-tauri/tauri.bundled-ffmpeg.conf.json --config src-tauri/tauri.updater.conf.json
+```
+
+Para generar la Lite firmada, omite `pnpm fetch-ffmpeg` y ejecuta:
+
+```powershell
+pnpm tauri build --config src-tauri/tauri.updater.conf.json
+```
+
+La [documentación del updater de
+Tauri](https://v2.tauri.app/plugin/updater/) explica el formato de las claves y
+los artefactos firmados.
 
 ---
 
 ## Compilar
 
-Requisitos: [Node.js](https://nodejs.org/) 20+, [Rust](https://rustup.rs/),
+Requisitos: [Node.js](https://nodejs.org/) 22.13+, [Rust](https://rustup.rs/),
 [pnpm](https://pnpm.io/) (`corepack enable`)
 
 ```bash

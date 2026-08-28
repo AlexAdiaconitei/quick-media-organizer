@@ -160,12 +160,22 @@ Nothing in the app points at a fixed repository: the update endpoint is written
 at build time from `GITHUB_REPOSITORY` (or the `origin` remote when building
 locally), so a fork updates from its own releases.
 
-To enable it, generate a signing key pair once and add three repository
-secrets:
+#### Configure GitHub Actions
+
+Generate the signing key pair once from the repository root:
 
 ```bash
 pnpm tauri signer generate -w .tauri/qmo.key
 ```
+
+Keep a secure backup of `.tauri/qmo.key` and its password. Do not share the
+private key or commit it to the repository. If you lose it, you cannot publish
+updates for users whose installed version trusts that key. The
+`.tauri/qmo.key.pub` file is public and safe to share.
+
+On the fork's GitHub page, open **Settings > Secrets and variables > Actions >
+Secrets**. Select **New repository secret** and create these three repository
+secrets:
 
 | Secret | Value |
 |---|---|
@@ -173,14 +183,45 @@ pnpm tauri signer generate -w .tauri/qmo.key
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | the password you chose |
 | `TAURI_SIGNING_PUBLIC_KEY` | contents of `.tauri/qmo.key.pub` |
 
-Then push a tag. Releases without those secrets still build and publish — they
-just ship without the in-app updater.
+See [GitHub's documentation on repository
+secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+if that section is not visible. You need write access to the repository.
+
+Then push a tag. The workflow signs the update artifacts, generates
+`latest.json`, and checks that it contains Windows and macOS before publishing
+the release. A release without both signing keys still publishes, but does not
+include the updater. Defining only one of the two keys makes the workflow fail
+instead of publishing a misconfigured release.
+
+#### Test a signed build locally
+
+Tauri does not read these keys from `.env` files. In PowerShell, set the
+variables for the current session and build the Standard edition with:
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = ".tauri/qmo.key"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Read-Host "Key password"
+$env:TAURI_SIGNING_PUBLIC_KEY = (Get-Content -Raw .tauri/qmo.key.pub).Trim()
+node scripts/updater-config.mjs
+pnpm fetch-ffmpeg
+pnpm tauri build --config src-tauri/tauri.bundled-ffmpeg.conf.json --config src-tauri/tauri.updater.conf.json
+```
+
+To build the signed Lite edition, skip `pnpm fetch-ffmpeg` and run:
+
+```powershell
+pnpm tauri build --config src-tauri/tauri.updater.conf.json
+```
+
+The [Tauri updater
+documentation](https://v2.tauri.app/plugin/updater/) describes the key format
+and the signed artifacts.
 
 ---
 
 ## Build from source
 
-Requirements: [Node.js](https://nodejs.org/) 20+, [Rust](https://rustup.rs/),
+Requirements: [Node.js](https://nodejs.org/) 22.13+, [Rust](https://rustup.rs/),
 [pnpm](https://pnpm.io/) (`corepack enable`)
 
 ```bash
