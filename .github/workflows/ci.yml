@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -17,14 +20,13 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+      - uses: pnpm/setup@v1
         with:
-          node-version: 20
+          runtime: node@22
           cache: pnpm
+          install: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -67,3 +69,13 @@ jobs:
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test
+
+      # This catches failures that compile-time checks cannot see, such as a
+      # Tauri plugin being initialized without its required configuration.
+      - name: Build Windows startup smoke binary
+        if: matrix.platform == 'windows-latest'
+        run: pnpm tauri build --no-bundle
+
+      - name: Verify the Windows application starts
+        if: matrix.platform == 'windows-latest'
+        run: pnpm smoke:startup -- src-tauri/target/release/quick-media-organizer.exe

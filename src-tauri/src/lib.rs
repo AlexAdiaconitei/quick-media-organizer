@@ -21,6 +21,11 @@ use error_log::{ErrorLog, SharedErrorLog};
 use state::{AppState, SharedState};
 use tauri::Manager;
 
+#[cfg(desktop)]
+fn updater_is_configured(config: Option<&serde_json::Value>) -> bool {
+    config.is_some_and(|value| !value.is_null())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -29,8 +34,10 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            if updater_is_configured(app.config().plugins.0.get("updater")) {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
 
             let app_data_dir = app
                 .path()
@@ -91,4 +98,25 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(all(test, desktop))]
+mod tests {
+    use super::updater_is_configured;
+
+    #[test]
+    fn updater_is_not_started_without_configuration() {
+        assert!(!updater_is_configured(None));
+        assert!(!updater_is_configured(Some(&serde_json::Value::Null)));
+    }
+
+    #[test]
+    fn updater_is_started_when_configuration_exists() {
+        let config = serde_json::json!({
+            "pubkey": "test-key",
+            "endpoints": ["https://example.com/latest.json"]
+        });
+
+        assert!(updater_is_configured(Some(&config)));
+    }
 }

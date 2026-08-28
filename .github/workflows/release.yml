@@ -1,35 +1,60 @@
 name: Release
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   push:
     tags:
       - "v*"
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/setup@v1
+        with:
+          runtime: node@22
+          cache: false
+          install: false
+
+      - name: Verify tag and project versions
+        run: pnpm verify:release -- "${{ github.ref_name }}"
+
   release:
+    needs: validate
     permissions:
       contents: write
     strategy:
       fail-fast: false
+      # tauri-action merges each platform into latest.json. Serial builds stop
+      # two jobs from reading and overwriting that asset at the same time.
+      max-parallel: 1
       matrix:
         include:
           - platform: macos-latest
             args: --target aarch64-apple-darwin
             target_dir: aarch64-apple-darwin
+            executable: src-tauri/target/aarch64-apple-darwin/release/quick-media-organizer
           - platform: windows-latest
             args: ""
             target_dir: ""
+            executable: src-tauri/target/release/quick-media-organizer.exe
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+      - uses: pnpm/setup@v1
         with:
-          node-version: 20
+          runtime: node@22
           cache: pnpm
+          install: false
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -51,6 +76,7 @@ jobs:
         shell: bash
         env:
           TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           node scripts/updater-config.mjs
@@ -62,7 +88,13 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build the release binary before publishing
+        run: pnpm tauri build --no-bundle ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json ${{ steps.updater.outputs.config }}
+
+      - name: Verify the release application starts
+        run: pnpm smoke:startup -- "${{ matrix.executable }}"
+
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -70,6 +102,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Quick Media Organizer ${{ github.ref_name }}"
+          releaseDraft: true
           releaseBody: |
             Keyboard-first desktop app to rename, sort, trim and clean up phone photo & video backups.
 
@@ -78,8 +111,8 @@ jobs:
             **Standard** — FFmpeg included. Trimming and batch optimizing work
             straight after install, nothing else to set up.
 
-            Both check for updates from this repository's releases and can
-            install them from inside the app.
+            Signed builds that include `latest.json` check for updates from
+            this repository. Other builds link to the releases page instead.
 
             **Lite** (`-lite` in the file name) — same app, ~50 MB smaller,
             without FFmpeg. Renaming and organizing work as they are; trimming
@@ -104,7 +137,7 @@ jobs:
             The bundled FFmpeg is GPL-licensed and stays a separate program,
             invoked as a subprocess; the app itself is MIT. See
             FFMPEG-LICENSE.txt next to the installed app.
-          includeUpdaterJson: ${{ steps.updater.outputs.enabled }}
+          uploadUpdaterJson: ${{ steps.updater.outputs.enabled }}
           args: ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json ${{ steps.updater.outputs.config }}
 
       # The Rust binary is already built, so this only repeats the bundling
@@ -141,3 +174,59 @@ jobs:
           fi
 
           gh release upload "${{ github.ref_name }}" "${uploads[@]}" --clobber
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Verify every installer before publishing
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "${{ github.ref_name }}" --json assets --jq '.assets[].name')"
+
+          require_standard() {
+            local extension="$1"
+            if ! printf '%s\n' "$assets" | grep -Ei "\\.${extension}$" | grep -Eiv -- '-lite\.' >/dev/null; then
+              echo "Missing standard .${extension} installer" >&2
+              exit 1
+            fi
+          }
+
+          require_lite() {
+            local extension="$1"
+            if ! printf '%s\n' "$assets" | grep -Ei -- "-lite\\.${extension}$" >/dev/null; then
+              echo "Missing lite .${extension} installer" >&2
+              exit 1
+            fi
+          }
+
+          require_standard msi
+          require_standard exe
+          require_standard dmg
+          require_lite msi
+          require_lite exe
+          require_lite dmg
+
+          if [ -n "$TAURI_SIGNING_PUBLIC_KEY" ] && [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            work_dir="${RUNNER_TEMP}/qmo-release-assets"
+            mkdir -p "$work_dir"
+            gh release download "${{ github.ref_name }}" --pattern latest.json --dir "$work_dir"
+            jq -e \
+              '.platforms["windows-x86_64"] and .platforms["darwin-aarch64"]' \
+              "$work_dir/latest.json" >/dev/null
+          elif [ -n "$TAURI_SIGNING_PUBLIC_KEY" ] || [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "Updater signing configuration is incomplete" >&2
+            exit 1
+          fi
+
+      - name: Publish the verified release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false --latest
