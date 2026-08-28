@@ -4,24 +4,33 @@
 //! and holding the app-state mutex for that long would freeze every other
 //! command. Workers only touch the job's own mutex, for microseconds at a time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+
 use super::ffmpeg_args::{
     classify_path, image_flags, output_extension, output_file_name, resolve_output_path,
-    temp_output_path, video_flags,
+    temp_output_path,
+};
+#[cfg(test)]
+use super::video_backend::software_capability;
+use super::video_backend::{
+    backend_label, next_attempt_index, resolve_video_encoding, VideoEncodeAttempt,
+    VideoEncodingPlan,
 };
 use super::{
     AudioMode, BatchItemState, BatchItemStatus, BatchJobStatus, BatchMediaType,
     BatchProgressSummary, BatchReplacement, BatchSettings, ConflictPolicy, OutputMode,
+    VideoBackend, VideoBackendCapability,
 };
-use crate::fs_util::{apply_timestamps, read_timestamps};
+use crate::fs_util::{apply_timestamps, copy_file_preserve, read_timestamps};
 use crate::path_util::{is_path_inside_root, APP_FOLDER_NAME};
-use crate::video::{FfmpegTools, CANCELLED};
+use crate::video::{EncodeRequest, FfmpegTools, CANCELLED};
 
 const PROGRESS_EVENT_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -111,15 +120,7 @@ impl BatchRunner {
 pub trait MediaEncoder: Send + Sync {
     fn probe_duration(&self, path: &Path) -> Option<f64>;
 
-    fn encode(
-        &self,
-        input: &Path,
-        output: &Path,
-        flags: &[String],
-        duration: Option<f64>,
-        cancel: &AtomicBool,
-        on_progress: &dyn Fn(f32),
-    ) -> Result<(), String>;
+    fn encode(&self, request: EncodeRequest<'_>) -> Result<(), String>;
 }
 
 pub struct FfmpegEncoder {
@@ -143,17 +144,8 @@ impl MediaEncoder for FfmpegEncoder {
         self.tools.probe_duration(path).ok()
     }
 
-    fn encode(
-        &self,
-        input: &Path,
-        output: &Path,
-        flags: &[String],
-        duration: Option<f64>,
-        cancel: &AtomicBool,
-        on_progress: &dyn Fn(f32),
-    ) -> Result<(), String> {
-        self.tools
-            .encode(input, output, flags, duration, cancel, on_progress)
+    fn encode(&self, request: EncodeRequest<'_>) -> Result<(), String> {
+        self.tools.encode(request)
     }
 }
 
@@ -166,14 +158,15 @@ pub trait BatchEvents: Send + Sync {
 
 /// One unit of work, fully resolved before any worker starts, so two workers
 /// can never race for the same output name.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncodePlan {
     pub input: PathBuf,
     pub temp_output: PathBuf,
     pub final_output: PathBuf,
-    pub flags: Vec<String>,
-    /// Retried once with these when the first attempt fails (audio copy).
-    pub fallback_flags: Option<Vec<String>>,
+    /// Ordered attempts. Video plans may move from hardware to software and
+    /// from copied audio to AAC according to the classified FFmpeg error.
+    pub attempts: Vec<VideoEncodeAttempt>,
+    pub resolved_backend: Option<VideoBackend>,
     pub media_type: BatchMediaType,
     pub replace_original: bool,
     pub backup: bool,
@@ -189,7 +182,16 @@ pub struct PlannedItem {
 
 /// Builds the work list. Unsupported or unreadable files come back already
 /// marked as failed/skipped instead of blowing up the whole job.
+#[cfg(test)]
 pub fn plan_items(paths: &[String], settings: &BatchSettings) -> Vec<PlannedItem> {
+    plan_items_with_capabilities(paths, settings, &[software_capability()])
+}
+
+pub fn plan_items_with_capabilities(
+    paths: &[String],
+    settings: &BatchSettings,
+    video_backends: &[VideoBackendCapability],
+) -> Vec<PlannedItem> {
     let mut reserved: Vec<PathBuf> = Vec::new();
     let mut planned: Vec<PlannedItem> = Vec::new();
 
@@ -214,6 +216,8 @@ pub fn plan_items(paths: &[String], settings: &BatchSettings) -> Vec<PlannedItem
             size_after: None,
             output_path: None,
             error: None,
+            encoder_backend: None,
+            fallback_reason: None,
         };
 
         let Some(media_type) = media_type else {
@@ -230,7 +234,14 @@ pub fn plan_items(paths: &[String], settings: &BatchSettings) -> Vec<PlannedItem
             continue;
         }
 
-        match build_plan(&source, media_type, settings, index, &reserved) {
+        match build_plan(
+            &source,
+            media_type,
+            settings,
+            index,
+            &reserved,
+            video_backends,
+        ) {
             Ok(PlanOutcome::Work(plan)) => {
                 reserved.push(plan.final_output.clone());
                 status.output_path = Some(plan.final_output.to_string_lossy().to_string());
@@ -267,22 +278,23 @@ fn build_plan(
     settings: &BatchSettings,
     index: usize,
     reserved: &[PathBuf],
+    video_backends: &[VideoBackendCapability],
 ) -> Result<PlanOutcome, String> {
     let ext = output_extension(media_type, settings, source)?;
-    let flags = match media_type {
-        BatchMediaType::Video => video_flags(&settings.video),
-        BatchMediaType::Image => image_flags(&settings.image, &ext)?,
-    };
-    // Copying the audio stream fails whenever the source codec cannot live in
-    // the target container (PCM in .avi, Vorbis in .mkv). Keep an AAC variant
-    // ready so one bad stream does not lose the whole file.
-    let fallback_flags = match media_type {
-        BatchMediaType::Video if settings.video.audio == AudioMode::Copy => {
-            let mut retry = settings.video.clone();
-            retry.audio = AudioMode::Aac;
-            Some(video_flags(&retry))
+    let (attempts, resolved_backend) = match media_type {
+        BatchMediaType::Video => {
+            let video = resolve_video_encoding(&settings.video, video_backends)?;
+            (video.attempts, Some(video.resolved_backend))
         }
-        _ => None,
+        BatchMediaType::Image => (
+            vec![VideoEncodeAttempt {
+                backend: VideoBackend::Software,
+                audio: AudioMode::Drop,
+                input_flags: Vec::new(),
+                output_flags: image_flags(&settings.image, &ext)?,
+            }],
+            None,
+        ),
     };
 
     let source_dir = source
@@ -390,8 +402,8 @@ fn build_plan(
         input: source.to_path_buf(),
         temp_output: temp_output_path(&final_output, index),
         final_output,
-        flags,
-        fallback_flags,
+        attempts,
+        resolved_backend,
         media_type,
         replace_original,
         backup,
@@ -430,11 +442,14 @@ pub fn run_job<E, V>(
         .filter_map(|(index, planned)| planned.plan.clone().map(|plan| (index, plan)))
         .collect();
 
+    // Rebuild aggregates from statuses so a resumed job keeps its completed
+    // work while a fresh job counts planning failures exactly once.
+    recalculate_terminal_state(&job);
+
     // Items that never got a plan already carry their final state.
     for planned in &plans {
         if planned.plan.is_none() {
             let status = planned.status.clone();
-            apply_terminal_state(&job, &status);
             events.item(&status);
         }
     }
@@ -443,6 +458,9 @@ pub fn run_job<E, V>(
     let next = Arc::new(AtomicUsize::new(0));
     let workers = settings.concurrency.clamp(1, 8).min(work.len().max(1));
     let work = Arc::new(work);
+    // Many consumer GPU drivers become unstable when several encoders are
+    // opened concurrently. CPU and still-image work remain fully concurrent.
+    let hardware_gate = Arc::new(Mutex::new(()));
 
     std::thread::scope(|scope| {
         for _ in 0..workers {
@@ -453,6 +471,7 @@ pub fn run_job<E, V>(
             let events = Arc::clone(&events);
             let cancel = Arc::clone(&cancel);
             let settings = settings.clone();
+            let hardware_gate = Arc::clone(&hardware_gate);
 
             scope.spawn(move || loop {
                 let slot = next.fetch_add(1, Ordering::Relaxed);
@@ -460,15 +479,15 @@ pub fn run_job<E, V>(
                     break;
                 }
                 let (index, plan) = &work[slot];
-                process_one(
-                    *index,
-                    plan,
-                    &settings,
-                    &job,
-                    encoder.as_ref(),
-                    events.as_ref(),
-                    &cancel,
-                );
+                let context = ProcessContext {
+                    settings: &settings,
+                    job: &job,
+                    encoder: encoder.as_ref(),
+                    events: events.as_ref(),
+                    cancel: &cancel,
+                    hardware_gate: &hardware_gate,
+                };
+                process_one(*index, plan, &context);
             });
         }
     });
@@ -476,15 +495,26 @@ pub fn run_job<E, V>(
     finish_job(&job, &cancel, events.as_ref());
 }
 
+struct ProcessContext<'a, E, V> {
+    settings: &'a BatchSettings,
+    job: &'a Arc<Mutex<BatchJobStatus>>,
+    encoder: &'a E,
+    events: &'a V,
+    cancel: &'a AtomicBool,
+    hardware_gate: &'a Mutex<()>,
+}
+
 fn process_one<E: MediaEncoder, V: BatchEvents>(
     index: usize,
     plan: &EncodePlan,
-    settings: &BatchSettings,
-    job: &Arc<Mutex<BatchJobStatus>>,
-    encoder: &E,
-    events: &V,
-    cancel: &AtomicBool,
+    context: &ProcessContext<'_, E, V>,
 ) {
+    let settings = context.settings;
+    let job = context.job;
+    let encoder = context.encoder;
+    let events = context.events;
+    let cancel = context.cancel;
+    let hardware_gate = context.hardware_gate;
     if cancel.load(Ordering::Relaxed) {
         return;
     }
@@ -492,6 +522,7 @@ fn process_one<E: MediaEncoder, V: BatchEvents>(
     if let Some(status) = update_item(job, index, |item| {
         item.state = BatchItemState::Running;
         item.progress = 0.0;
+        item.encoder_backend = plan.resolved_backend;
     }) {
         events.item(&status);
     }
@@ -519,30 +550,75 @@ fn process_one<E: MediaEncoder, V: BatchEvents>(
         }
     };
 
-    let mut attempt = encoder.encode(
-        &plan.input,
-        &plan.temp_output,
-        &plan.flags,
-        duration,
-        cancel,
-        &on_progress,
-    );
-
-    // One retry with re-encoded audio: stream copy fails whenever the source
-    // audio codec cannot be stored in the target container.
-    if let (Err(error), Some(fallback)) = (&attempt, &plan.fallback_flags) {
-        if error != CANCELLED && !cancel.load(Ordering::Relaxed) {
-            let _ = fs::remove_file(&plan.temp_output);
-            attempt = encoder.encode(
-                &plan.input,
-                &plan.temp_output,
-                fallback,
-                duration,
-                cancel,
-                &on_progress,
-            );
+    let video_plan = plan
+        .resolved_backend
+        .map(|resolved_backend| VideoEncodingPlan {
+            resolved_backend,
+            attempts: plan.attempts.clone(),
+        });
+    let mut attempted = HashSet::new();
+    let mut current = 0usize;
+    let mut fallback_reason: Option<String> = None;
+    let attempt = loop {
+        let Some(encode_attempt) = plan.attempts.get(current) else {
+            break Err("No encoding attempt was configured.".into());
+        };
+        if let Some(status) = update_item(job, index, |item| {
+            if plan.media_type == BatchMediaType::Video {
+                item.encoder_backend = Some(encode_attempt.backend);
+            }
+            item.fallback_reason = fallback_reason.clone();
+        }) {
+            events.item(&status);
         }
-    }
+
+        let result = if encode_attempt.backend.is_hardware() {
+            let _guard = hardware_gate
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            encoder.encode(EncodeRequest {
+                input: &plan.input,
+                output: &plan.temp_output,
+                input_flags: &encode_attempt.input_flags,
+                output_flags: &encode_attempt.output_flags,
+                total_duration: duration,
+                cancel,
+                on_progress: &on_progress,
+            })
+        } else {
+            encoder.encode(EncodeRequest {
+                input: &plan.input,
+                output: &plan.temp_output,
+                input_flags: &encode_attempt.input_flags,
+                output_flags: &encode_attempt.output_flags,
+                total_duration: duration,
+                cancel,
+                on_progress: &on_progress,
+            })
+        };
+
+        match result {
+            Ok(()) => break Ok(()),
+            Err(error) => {
+                attempted.insert(current);
+                let next = video_plan
+                    .as_ref()
+                    .and_then(|video| next_attempt_index(video, current, &error, &attempted));
+                let Some(next) = next else {
+                    break Err(error);
+                };
+                let next_attempt = &plan.attempts[next];
+                fallback_reason = Some(format!(
+                    "{} failed; retried with {}: {}",
+                    backend_label(encode_attempt.backend),
+                    backend_label(next_attempt.backend),
+                    concise_error(&error)
+                ));
+                let _ = fs::remove_file(&plan.temp_output);
+                current = next;
+            }
+        }
+    };
 
     let outcome = attempt.and_then(|()| finalize_output(plan, settings, encoder, job));
 
@@ -556,6 +632,12 @@ fn process_one<E: MediaEncoder, V: BatchEvents>(
             item.size_after = Some(size_after);
             item.output_path = Some(output_path.clone());
             item.error = None;
+            item.encoder_backend = plan
+                .attempts
+                .get(current)
+                .filter(|_| plan.media_type == BatchMediaType::Video)
+                .map(|attempt| attempt.backend);
+            item.fallback_reason = fallback_reason.clone();
         }),
         Ok(ItemOutcome::Skipped { reason }) => update_item(job, index, |item| {
             item.state = BatchItemState::Skipped;
@@ -573,6 +655,7 @@ fn process_one<E: MediaEncoder, V: BatchEvents>(
             update_item(job, index, |item| {
                 item.state = BatchItemState::Failed;
                 item.error = Some(error.clone());
+                item.fallback_reason = fallback_reason.clone();
             })
         }
     };
@@ -582,6 +665,17 @@ fn process_one<E: MediaEncoder, V: BatchEvents>(
         events.item(&status);
         emit_progress(job, events);
     }
+}
+
+fn concise_error(error: &str) -> String {
+    error
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or(error)
+        .trim()
+        .chars()
+        .take(240)
+        .collect()
 }
 
 enum ItemOutcome {
@@ -655,7 +749,8 @@ fn finalize_output<E: MediaEncoder>(
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("Cannot create backup folder: {e}"))?;
         }
-        fs::copy(&plan.input, &path).map_err(|e| format!("Could not back up the original: {e}"))?;
+        copy_file_preserve(&plan.input, &path)
+            .map_err(|e| format!("Could not back up the original: {e}"))?;
         Some(path)
     } else {
         None
@@ -671,7 +766,7 @@ fn finalize_output<E: MediaEncoder>(
                 return Err(format!("Cannot create target backup folder: {error}"));
             }
         }
-        if let Err(error) = fs::copy(target, &path) {
+        if let Err(error) = copy_file_preserve(target, &path) {
             if let Some(backup) = &backup_path {
                 let _ = fs::remove_file(backup);
             }
@@ -843,6 +938,34 @@ fn apply_terminal_state(job: &Arc<Mutex<BatchJobStatus>>, status: &BatchItemStat
     }
 }
 
+fn recalculate_terminal_state(job: &Arc<Mutex<BatchJobStatus>>) {
+    let Ok(mut guard) = job.lock() else {
+        return;
+    };
+    let mut done = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+    let mut bytes_before = 0;
+    let mut bytes_after = 0;
+    for item in &guard.items {
+        match item.state {
+            BatchItemState::Done => {
+                done += 1;
+                bytes_before += item.size_before;
+                bytes_after += item.size_after.unwrap_or(item.size_before);
+            }
+            BatchItemState::Failed => failed += 1,
+            BatchItemState::Skipped => skipped += 1,
+            _ => {}
+        }
+    }
+    guard.done = done;
+    guard.failed = failed;
+    guard.skipped = skipped;
+    guard.bytes_before = bytes_before;
+    guard.bytes_after = bytes_after;
+}
+
 fn emit_progress<V: BatchEvents>(job: &Arc<Mutex<BatchJobStatus>>, events: &V) {
     let summary = job.lock().ok().map(|guard| guard.summary());
     if let Some(summary) = summary {
@@ -905,6 +1028,8 @@ pub fn new_job_status(
 mod tests {
     use super::*;
     use crate::batch::{ConflictPolicy, ImageFormat, VideoCodec};
+    use crate::state::AppState;
+    use filetime::FileTime;
     use std::sync::atomic::AtomicU32;
 
     struct FakeEncoder {
@@ -913,7 +1038,28 @@ mod tests {
         fail_on: Option<String>,
         /// Fails whenever the flags contain this fragment.
         fail_flag: Option<String>,
+        fail_flag_error: Option<String>,
         calls: AtomicU32,
+    }
+
+    struct ConcurrencyEncoder {
+        active: AtomicUsize,
+        max_active: AtomicUsize,
+    }
+
+    impl MediaEncoder for ConcurrencyEncoder {
+        fn probe_duration(&self, _path: &Path) -> Option<f64> {
+            Some(1.0)
+        }
+
+        fn encode(&self, request: EncodeRequest<'_>) -> Result<(), String> {
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active.fetch_max(active, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(30));
+            fs::write(request.output, vec![b'x'; 100]).map_err(|error| error.to_string())?;
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(())
+        }
     }
 
     impl FakeEncoder {
@@ -922,6 +1068,7 @@ mod tests {
                 output_size,
                 fail_on: None,
                 fail_flag: None,
+                fail_flag_error: None,
                 calls: AtomicU32::new(0),
             }
         }
@@ -932,32 +1079,26 @@ mod tests {
             Some(10.0)
         }
 
-        fn encode(
-            &self,
-            input: &Path,
-            output: &Path,
-            flags: &[String],
-            _duration: Option<f64>,
-            cancel: &AtomicBool,
-            on_progress: &dyn Fn(f32),
-        ) -> Result<(), String> {
+        fn encode(&self, request: EncodeRequest<'_>) -> Result<(), String> {
             self.calls.fetch_add(1, Ordering::Relaxed);
-            if cancel.load(Ordering::Relaxed) {
+            if request.cancel.load(Ordering::Relaxed) {
                 return Err(CANCELLED.to_string());
             }
             if let Some(needle) = &self.fail_on {
-                if input.to_string_lossy().contains(needle.as_str()) {
+                if request.input.to_string_lossy().contains(needle.as_str()) {
                     return Err("boom".into());
                 }
             }
             if let Some(needle) = &self.fail_flag {
-                if flags.join(" ").contains(needle.as_str()) {
-                    return Err("Could not write header (incorrect codec parameters?)".into());
+                if request.output_flags.join(" ").contains(needle.as_str()) {
+                    return Err(self.fail_flag_error.clone().unwrap_or_else(|| {
+                        "Could not write header (incorrect codec parameters?)".into()
+                    }));
                 }
             }
-            on_progress(0.5);
-            fs::write(output, vec![b'x'; self.output_size]).map_err(|e| e.to_string())?;
-            on_progress(1.0);
+            (request.on_progress)(0.5);
+            fs::write(request.output, vec![b'x'; self.output_size]).map_err(|e| e.to_string())?;
+            (request.on_progress)(1.0);
             Ok(())
         }
     }
@@ -999,7 +1140,17 @@ mod tests {
         encoder: FakeEncoder,
         cancel: Arc<AtomicBool>,
     ) -> (BatchJobStatus, Arc<CollectedEvents>) {
-        let plans = plan_items(&paths, &settings);
+        run_with_capabilities(paths, settings, encoder, cancel, &[software_capability()])
+    }
+
+    fn run_with_capabilities(
+        paths: Vec<String>,
+        settings: BatchSettings,
+        encoder: FakeEncoder,
+        cancel: Arc<AtomicBool>,
+        capabilities: &[VideoBackendCapability],
+    ) -> (BatchJobStatus, Arc<CollectedEvents>) {
+        let plans = plan_items_with_capabilities(&paths, &settings, capabilities);
         let statuses: Vec<BatchItemStatus> =
             plans.iter().map(|planned| planned.status.clone()).collect();
         let job = Arc::new(Mutex::new(new_job_status(
@@ -1115,6 +1266,55 @@ mod tests {
         assert!(Path::new(&replacement.backup_path).is_file());
         assert_eq!(replacement.original_path, a);
         assert_ne!(replacement.converted_path, replacement.original_path);
+    }
+
+    #[test]
+    fn replace_and_undo_restore_exact_bytes_and_timestamps() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_data = tempfile::tempdir().unwrap();
+        let source = write_source(dir.path(), "photo.jpg", 1000);
+        let original_bytes = fs::read(&source).unwrap();
+        let original_time = FileTime::from_unix_time(1_600_000_000, 0);
+
+        let mut state = AppState::new(app_data.path().to_path_buf());
+        state.open_folder(dir.path().to_path_buf()).unwrap();
+        filetime::set_file_times(&source, original_time, original_time).unwrap();
+
+        let settings = image_settings(OutputMode::ReplaceOriginal {
+            backup: true,
+            confirmed: true,
+        });
+        let (job, _) = run(
+            vec![source.clone()],
+            settings,
+            FakeEncoder::new(200),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.done, 1);
+        assert_eq!(fs::metadata(&source).unwrap().len(), 200);
+        let replacements: Vec<(String, String, String)> = job
+            .replacements
+            .iter()
+            .map(|item| {
+                (
+                    item.backup_path.clone(),
+                    item.original_path.clone(),
+                    item.converted_path.clone(),
+                )
+            })
+            .collect();
+        let backup_times = read_timestamps(Path::new(&replacements[0].0)).unwrap();
+        assert_eq!(backup_times.modified, original_time);
+        assert_eq!(state.apply_batch_replacements(&replacements).unwrap(), 1);
+        assert_eq!(state.apply_batch_replacements(&replacements).unwrap(), 0);
+        assert_eq!(state.undo_stack.len(), 1);
+        state.undo_last().unwrap();
+
+        let restored = read_timestamps(Path::new(&source)).unwrap();
+        assert_eq!(restored.modified, original_time);
+        assert_eq!(fs::read(&source).unwrap(), original_bytes);
+        assert!(no_temp_files(dir.path()));
     }
 
     #[test]
@@ -1359,7 +1559,7 @@ mod tests {
         let plans = plan_items(&[clip], &settings);
         let plan = plans[0].plan.as_ref().unwrap();
         assert_eq!(plan.media_type, BatchMediaType::Video);
-        assert!(plan.flags.join(" ").contains("libx265"));
+        assert!(plan.attempts[0].output_flags.join(" ").contains("libx265"));
         assert_eq!(plan.final_output.extension().unwrap(), "mp4");
     }
 
@@ -1411,6 +1611,166 @@ mod tests {
 
         assert_eq!(job.done, 1, "the AAC retry rescued the file");
         assert!(dir.path().join("_optimized/clip.mp4").is_file());
+    }
+
+    #[test]
+    fn unavailable_gpu_during_encode_falls_back_to_cpu_and_reports_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let clip = write_source(dir.path(), "clip.mov", 1000);
+        let settings = image_settings(OutputMode::Subfolder {
+            name: "_optimized".into(),
+        });
+        let capabilities = [VideoBackendCapability {
+            backend: VideoBackend::Nvidia,
+            codecs: vec![VideoCodec::H265],
+            available: true,
+            reason: None,
+        }];
+        let mut encoder = FakeEncoder::new(100);
+        encoder.fail_flag = Some("hevc_nvenc".into());
+        encoder.fail_flag_error = Some("No capable devices found".into());
+
+        let (job, _) = run_with_capabilities(
+            vec![clip],
+            settings,
+            encoder,
+            Arc::new(AtomicBool::new(false)),
+            &capabilities,
+        );
+
+        assert_eq!(job.done, 1);
+        assert_eq!(job.items[0].encoder_backend, Some(VideoBackend::Software));
+        assert!(job.items[0]
+            .fallback_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("NVIDIA NVENC")));
+    }
+
+    #[test]
+    fn hardware_encodes_are_serialized_while_the_job_has_multiple_workers() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = vec![
+            write_source(dir.path(), "one.mov", 1000),
+            write_source(dir.path(), "two.mov", 1000),
+        ];
+        let mut settings = image_settings(OutputMode::Subfolder {
+            name: "_optimized".into(),
+        });
+        settings.concurrency = 2;
+        let capabilities = [VideoBackendCapability {
+            backend: VideoBackend::Nvidia,
+            codecs: vec![VideoCodec::H265],
+            available: true,
+            reason: None,
+        }];
+        let plans = plan_items_with_capabilities(&paths, &settings, &capabilities);
+        let statuses = plans.iter().map(|item| item.status.clone()).collect();
+        let job = Arc::new(Mutex::new(new_job_status(
+            "hardware-concurrency".into(),
+            statuses,
+            None,
+            false,
+        )));
+        let encoder = Arc::new(ConcurrencyEncoder {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+        });
+
+        run_job(
+            Arc::clone(&job),
+            plans,
+            settings,
+            Arc::clone(&encoder),
+            Arc::new(CollectedEvents::default()),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.lock().unwrap().done, 2);
+        assert_eq!(encoder.max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn resumed_jobs_keep_completed_files_and_run_only_pending_plans() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = vec![
+            write_source(dir.path(), "done.mov", 1000),
+            write_source(dir.path(), "pending.mov", 1000),
+        ];
+        let settings = image_settings(OutputMode::Subfolder {
+            name: "_optimized".into(),
+        });
+        let mut plans = plan_items(&paths, &settings);
+        let completed_output = plans[0].plan.as_ref().unwrap().final_output.clone();
+        fs::write(&completed_output, vec![b'd'; 120]).unwrap();
+        plans[0].status.state = BatchItemState::Done;
+        plans[0].status.progress = 1.0;
+        plans[0].status.size_after = Some(120);
+        plans[0].plan = None;
+        let statuses = plans.iter().map(|item| item.status.clone()).collect();
+        let job = Arc::new(Mutex::new(new_job_status(
+            "resumed".into(),
+            statuses,
+            None,
+            false,
+        )));
+
+        run_job(
+            Arc::clone(&job),
+            plans,
+            settings,
+            Arc::new(FakeEncoder::new(100)),
+            Arc::new(CollectedEvents::default()),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        let snapshot = job.lock().unwrap().clone();
+        assert_eq!(snapshot.done, 2);
+        assert_eq!(fs::read(completed_output).unwrap(), vec![b'd'; 120]);
+    }
+
+    #[test]
+    fn unicode_paths_survive_planning_and_conversion() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = write_source(dir.path(), "vídeo familiar 🎬.mov", 1000);
+
+        let (job, _) = run(
+            vec![source],
+            image_settings(OutputMode::Subfolder {
+                name: "salida ágil".into(),
+            }),
+            FakeEncoder::new(100),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.done, 1);
+        assert!(dir
+            .path()
+            .join("salida ágil/vídeo familiar 🎬.mp4")
+            .is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_longer_than_260_characters_are_supported() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deep = dir.path().to_path_buf();
+        while deep.to_string_lossy().len() < 275 {
+            deep.push("a-very-long-camera-backup-segment");
+        }
+        fs::create_dir_all(&deep).unwrap();
+        let source = write_source(&deep, "clip.mov", 1000);
+
+        let (job, _) = run(
+            vec![source],
+            image_settings(OutputMode::Subfolder {
+                name: "_optimized".into(),
+            }),
+            FakeEncoder::new(100),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert_eq!(job.done, 1, "{:?}", job.items[0].error);
+        assert!(deep.join("_optimized/clip.mp4").is_file());
     }
 
     #[test]

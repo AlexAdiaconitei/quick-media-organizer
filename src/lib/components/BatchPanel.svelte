@@ -13,6 +13,7 @@
     cancelJob,
     dedupeItems,
     defaultBatchSettings,
+    estimateBatch,
     formatSize,
     isTauriAvailable,
     loadCapabilities,
@@ -30,6 +31,7 @@
   import { ffmpegInstallCommand } from "../shortcuts";
   import type {
     BatchItemStatus,
+    BatchEstimate,
     BatchJobStatus,
     BatchPreset,
     BatchProgressSummary,
@@ -90,11 +92,15 @@
     avif: false,
     heic_decode: true,
     version: null,
+    video_backends: [],
   });
   let savedPresets = $state<BatchPreset[]>([]);
   let job = $state<BatchJobStatus | null>(null);
   let cancelling = $state(false);
   let busy = $state(false);
+  let estimating = $state(false);
+  let estimate = $state<BatchEstimate | null>(null);
+  let estimateFor = $state("");
   let recursiveScan = $state(true);
   let showReplaceConfirm = $state(false);
   let showBackgroundCloseConfirm = $state(false);
@@ -116,6 +122,15 @@
   const backupHint = $derived(
     `${selectedItems[0]?.paths[0]?.replace(/[/\\][^/\\]*$/, "") ?? ""}/.quick-media-organizer/batch-backups/`,
   );
+  const estimateFingerprint = $derived(
+    JSON.stringify([selectedPaths(items, selected), settings]),
+  );
+
+  $effect(() => {
+    if (!demoMode && estimate && estimateFor !== estimateFingerprint) {
+      estimate = null;
+    }
+  });
 
   /// Never throws when the IPC bridge is missing, so running the frontend in a
   /// plain browser degrades instead of spamming unhandled rejections.
@@ -172,6 +187,15 @@
       }
       if (demoJob) {
         job = demoJob;
+      }
+      if (demoStep === "settings") {
+        estimate = {
+          bytes_before: 1_224_802_304,
+          estimated_bytes_after: 438_304_768,
+          sampled_files: 8,
+          total_files: 12,
+          failed_samples: 0,
+        };
       }
       step = demoStep ?? (demoJob ? "run" : "select");
       return;
@@ -393,6 +417,24 @@
     }
   }
 
+  async function estimateSize() {
+    const paths = selectedPaths(items, selected);
+    if (paths.length === 0 || demoMode) return;
+    estimating = true;
+    const fingerprint = estimateFingerprint;
+    try {
+      const result = await estimateBatch(paths, $state.snapshot(settings));
+      if (fingerprint === estimateFingerprint) {
+        estimate = result;
+        estimateFor = fingerprint;
+      }
+    } catch (error) {
+      onError(String(error));
+    } finally {
+      estimating = false;
+    }
+  }
+
   async function cancel() {
     if (!job) return;
     cancelling = true;
@@ -512,6 +554,23 @@
             onPickOutputFolder={() => void pickOutputFolder()}
             onRequestReplaceMode={() => (showReplaceConfirm = true)}
           />
+          {#if estimate}
+            <div class="batch-estimate" aria-live="polite">
+              <strong>{t(locale, "batch.estimate.title")}</strong>
+              <span>
+                {formatSize(estimate.bytes_before)} → {formatSize(estimate.estimated_bytes_after)}
+                ({format(locale, "batch.estimate.samples", {
+                  sampled: estimate.sampled_files,
+                  total: estimate.total_files,
+                })})
+              </span>
+              {#if estimate.failed_samples > 0}
+                <small>
+                  {format(locale, "batch.estimate.failed", { count: estimate.failed_samples })}
+                </small>
+              {/if}
+            </div>
+          {/if}
         {:else if job}
           <BatchProgress
             {locale}
@@ -540,6 +599,14 @@
             {t(locale, "batch.next")}
           </button>
         {:else if step === "settings"}
+          <button
+            type="button"
+            class="ghost-btn"
+            disabled={busy || estimating || selected.size === 0 || demoMode}
+            onclick={() => void estimateSize()}
+          >
+            {estimating ? t(locale, "batch.estimate.running") : t(locale, "batch.estimate.action")}
+          </button>
           <button
             type="button"
             class={replacesOriginals ? "danger-btn" : "primary-btn"}

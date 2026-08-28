@@ -31,8 +31,14 @@ Si te ahorra tiempo, te agradecería de corazón un [café ☕](https://buymeaco
 - **Renombrar** fotos y vídeos al instante con `Enter`
 - **Mover** a subcarpetas como `gym/`, `viajes/portugal/`, `documentos/` con `Ctrl+F`
 - **Recortar vídeos sin pérdida** (FFmpeg, copia de streams) antes de guardar
-- **Optimizar en lote** una carpeta entera: reducir vídeos a H.265/H.264 con la
+- **Optimizar en lote** una carpeta entera: reducir vídeos a H.265/H.264/AV1 con la
   resolución que elijas, o convertir fotos a JPEG/WebP/AVIF, en una carpeta nueva
+- **Usar la GPU automáticamente** para H.264/H.265/AV1 cuando FFmpeg y el equipo
+  admitan NVENC, Quick Sync, AMF, VideoToolbox o VAAPI; si la GPU falla, el
+  archivo se reintenta con CPU y el informe guarda el motivo
+- **Estimar el tamaño convertido** con muestras reales de tres segundos antes de empezar
+- **Reanudar un lote interrumpido** al volver a abrir la app; solo se reinician
+  los archivos pendientes
 - **Eliminar con seguridad** a `_deleted/` dentro de tu carpeta — nunca permanente, siempre deshacer
 - **Saltar**, **navegar** y **deshacer** sin ratón
 - **Live Photos** (`.heic` + `.mov`) se mueven, renombran y eliminan juntos
@@ -118,6 +124,12 @@ Sí. Los vídeos se previsualizan y recortan sin re-codificar. Los pares Live Ph
 
 **¿HEIC en Windows?**  
 Organizar funciona. La preview puede mostrar solo metadata en algunos casos.
+
+**¿Qué pasa si cierro la app durante un lote?**
+
+La app guarda un checkpoint después de cada archivo terminado. Al volver a
+abrir conserva esos resultados, borra la salida temporal incompleta y reanuda
+los archivos pendientes.
 
 **¿Descargo la Standard o la Lite?**  
 Cada release publica las dos:

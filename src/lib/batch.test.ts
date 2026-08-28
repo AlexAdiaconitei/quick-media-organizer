@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatFailureReport,
   metadataFate,
+  sanitizeStoredSettings,
   shouldFinalizeRecoveredJob,
 } from "./batch";
 import type { BatchItemStatus, BatchJobStatus } from "./types";
@@ -52,5 +53,17 @@ describe("failure reports", () => {
     expect(formatFailureReport([item])).toBe(
       "clip.mov\nD:\\camera\\clip.mov\nencoder exited with status 1",
     );
+  });
+});
+
+describe("saved batch settings", () => {
+  it("migrates settings saved before hardware acceleration existed", () => {
+    const oldSettings = {
+      video: { codec: "h265", crf: 28 },
+      image: { format: "jpeg", quality: 85 },
+      output: { mode: "subfolder", name: "_optimized" },
+    } as never;
+
+    expect(sanitizeStoredSettings(oldSettings).video.hardware_acceleration).toBe("auto");
   });
 });

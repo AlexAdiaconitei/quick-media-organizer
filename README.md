@@ -31,8 +31,14 @@ If it saves you time, I'd genuinely appreciate a [coffee ☕](https://buymeacoff
 - **Rename** photos and videos in seconds with `Enter`
 - **Move** files into subfolders like `gym/`, `trips/portugal/`, `paperwork/` with `Ctrl+F`
 - **Trim videos losslessly** (FFmpeg stream copy — no re-encoding) before saving
-- **Batch optimize** a whole folder: shrink videos to H.265/H.264 at the
+- **Batch optimize** a whole folder: shrink videos to H.265/H.264/AV1 at the
   resolution you pick, or convert photos to JPEG/WebP/AVIF, into a new folder
+- **Use the GPU automatically** for H.264/H.265/AV1 when FFmpeg and the device
+  support NVENC, Quick Sync, AMF, VideoToolbox or VAAPI; failed GPU jobs retry
+  safely on the CPU and record the fallback in the batch report
+- **Estimate the converted size** from real three-second samples before starting
+- **Resume an interrupted batch** after reopening the app; finished files stay
+  finished and only pending files restart
 - **Delete safely** to `_deleted/` inside your folder — never permanent, always undoable
 - **Skip**, **navigate**, and **undo** without touching the mouse
 - **Live Photos** (`.heic` + `.mov`) move, rename, and delete together
@@ -119,6 +125,11 @@ Yes. Videos preview in-app and can be trimmed losslessly. Live Photo pairs stay 
 
 **HEIC on Windows?**  
 Organizing works. Preview may fall back to metadata on some setups.
+
+**What happens if the app closes during a batch?**
+
+The app checkpoints every completed file. On the next launch it keeps those
+results, removes any incomplete temporary output and resumes the pending files.
 
 **Standard or Lite download?**  
 Every release ships both:

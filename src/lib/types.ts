@@ -103,6 +103,25 @@ export interface VideoSettings {
   audio_bitrate_kbps: number;
   faststart: boolean;
   keep_metadata: boolean;
+  hardware_acceleration: HardwareAcceleration;
+}
+
+export type HardwareAcceleration =
+  | "auto"
+  | "software"
+  | "nvidia"
+  | "intel"
+  | "amd"
+  | "video_toolbox"
+  | "vaapi";
+
+export type VideoBackend = Exclude<HardwareAcceleration, "auto">;
+
+export interface VideoBackendCapability {
+  backend: VideoBackend;
+  codecs: VideoCodec[];
+  available: boolean;
+  reason?: string | null;
 }
 
 export interface ImageConvertSettings {
@@ -140,6 +159,8 @@ export interface BatchItemStatus {
   size_after?: number | null;
   output_path?: string | null;
   error?: string | null;
+  encoder_backend?: VideoBackend | null;
+  fallback_reason?: string | null;
 }
 
 export interface BatchReplacement {
@@ -194,4 +215,13 @@ export interface FfmpegCapabilities {
   avif: boolean;
   heic_decode: boolean;
   version?: string | null;
+  video_backends: VideoBackendCapability[];
+}
+
+export interface BatchEstimate {
+  bytes_before: number;
+  estimated_bytes_after: number;
+  sampled_files: number;
+  total_files: number;
+  failed_samples: number;
 }

@@ -558,11 +558,25 @@ impl AppState {
             }
         };
 
-        // A conversion that changed the extension left a second file behind
-        // (a.heic -> a.jpg); remove it before restoring the backup.
+        // Move converted files aside before restoring backups. This also
+        // handles same-extension replacements on Windows, where rename does
+        // not overwrite an existing destination. Keeping the converted files
+        // until every backup is restored makes a failed undo reversible.
+        let mut displaced_conversions: Vec<(PathBuf, PathBuf)> = Vec::new();
         if let UndoAction::ConvertMedia { remove_paths, .. } = &action {
             for path in remove_paths {
-                let _ = std::fs::remove_file(path);
+                let converted = PathBuf::from(path);
+                if !converted.exists() {
+                    continue;
+                }
+                let displaced = undo_displaced_path(&converted);
+                if let Err(error) = std::fs::rename(&converted, &displaced) {
+                    for (original, staged) in displaced_conversions.iter().rev() {
+                        let _ = std::fs::rename(staged, original);
+                    }
+                    return Err(format!("Undo failed: {error}"));
+                }
+                displaced_conversions.push((converted, displaced));
             }
         }
 
@@ -574,9 +588,16 @@ impl AppState {
                     for done in reverted.iter().rev() {
                         let _ = move_file_preserve(Path::new(&done.to), Path::new(&done.from));
                     }
+                    for (original, staged) in displaced_conversions.iter().rev() {
+                        let _ = std::fs::rename(staged, original);
+                    }
                     return Err(format!("Undo failed: {err}"));
                 }
             }
+        }
+
+        for (_, staged) in &displaced_conversions {
+            let _ = std::fs::remove_file(staged);
         }
 
         self.undo_stack.pop();
@@ -701,12 +722,34 @@ impl AppState {
                 to: original.clone(),
             });
             focus_paths.push(original.clone());
-            if converted != original {
+            if !remove_paths.contains(converted) {
                 remove_paths.push(converted.clone());
             }
         }
 
         let count = moves.len();
+        let already_registered = self.undo_stack.iter().any(|action| {
+            let UndoAction::ConvertMedia {
+                moves: existing_moves,
+                remove_paths: existing_remove_paths,
+                ..
+            } = action
+            else {
+                return false;
+            };
+            existing_moves.len() == moves.len()
+                && existing_moves
+                    .iter()
+                    .zip(&moves)
+                    .all(|(left, right)| left.from == right.from && left.to == right.to)
+                && existing_remove_paths == &remove_paths
+        });
+        if already_registered {
+            self.rescan_preserving_position(&focus_paths);
+            self.persist_session_best_effort();
+            return Ok(0);
+        }
+
         self.push_undo(UndoAction::ConvertMedia {
             moves,
             focus_paths: focus_paths.clone(),
@@ -1148,6 +1191,16 @@ impl AppState {
             state: self.to_frontend_state(),
         }
     }
+}
+
+fn undo_displaced_path(path: &Path) -> PathBuf {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("media");
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S_%f");
+    dir.join(format!(".qmo-undo-{stamp}-{name}"))
 }
 
 fn session_index_fallback(saved_paths: &[String], items: &[MediaItem]) -> Option<usize> {

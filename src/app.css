@@ -1512,6 +1512,24 @@ button:disabled {
   text-align: right;
 }
 
+.batch-estimate {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(122, 162, 247, 0.08);
+  font-size: 13px;
+}
+
+.batch-estimate small {
+  width: 100%;
+  opacity: 0.72;
+}
+
 /* Clickable backdrop as a real button: dismissing a dialog by pointer must
    also be reachable from the keyboard. */
 .modal-scrim {

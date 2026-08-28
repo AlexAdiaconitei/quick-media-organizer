@@ -9,7 +9,9 @@
     BatchSettings,
     ConflictPolicy,
     FfmpegCapabilities,
+    HardwareAcceleration,
     ImageFormat,
+    VideoBackend,
     VideoCodec,
   } from "../types";
 
@@ -80,6 +82,65 @@
       { value: "copy" as VideoCodec, label: t(locale, "batch.settings.codecCopy") },
     ].filter(Boolean) as { value: VideoCodec; label: string }[],
   );
+
+  function backendLabel(backend: VideoBackend): string {
+    return t(locale, `batch.settings.backend${backend === "video_toolbox" ? "VideoToolbox" : backend[0].toUpperCase() + backend.slice(1)}`);
+  }
+
+  const selectedBackendCapability = $derived(
+    settings.video.hardware_acceleration === "auto" ||
+      settings.video.hardware_acceleration === "software"
+      ? null
+      : capabilities.video_backends.find(
+          (capability) => capability.backend === settings.video.hardware_acceleration,
+        ) ?? null,
+  );
+  const selectedBackendUnavailable = $derived(
+    settings.video.hardware_acceleration !== "auto" &&
+      settings.video.hardware_acceleration !== "software" &&
+      (!selectedBackendCapability ||
+        !selectedBackendCapability.available ||
+        !selectedBackendCapability.codecs.includes(settings.video.codec)),
+  );
+  const resolvedBackend = $derived.by((): VideoBackend => {
+    const preference = settings.video.hardware_acceleration;
+    if (preference === "software") return "software";
+    if (preference !== "auto") return preference;
+    return (
+      capabilities.video_backends.find(
+        (capability) =>
+          capability.available && capability.codecs.includes(settings.video.codec),
+      )?.backend ?? "software"
+    );
+  });
+  const hardwareOptions = $derived.by(() => {
+    const options: { value: HardwareAcceleration; label: string }[] = [
+      { value: "auto", label: t(locale, "batch.settings.hardwareAuto") },
+      { value: "software", label: backendLabel("software") },
+    ];
+    for (const capability of capabilities.video_backends) {
+      const usable = capability.available && capability.codecs.includes(settings.video.codec);
+      const selected = settings.video.hardware_acceleration === capability.backend;
+      if (usable || selected) {
+        options.push({
+          value: capability.backend,
+          label: `${backendLabel(capability.backend)}${usable ? "" : ` — ${t(locale, "batch.settings.hardwareUnavailable")}`}`,
+        });
+      }
+    }
+    const preference = settings.video.hardware_acceleration;
+    if (
+      preference !== "auto" &&
+      preference !== "software" &&
+      !options.some((option) => option.value === preference)
+    ) {
+      options.push({
+        value: preference,
+        label: `${backendLabel(preference)} — ${t(locale, "batch.settings.hardwareUnavailable")}`,
+      });
+    }
+    return options;
+  });
 
   const speedOptions = $derived([
     { value: "slow", label: t(locale, "batch.settings.speedSlow") },
@@ -240,10 +301,40 @@
       </div>
 
       {#if settings.video.codec !== "copy"}
+        <div class="field-label wide">
+          {t(locale, "batch.settings.hardware")}
+          <Select
+            value={settings.video.hardware_acceleration}
+            options={hardwareOptions}
+            onchange={(hardware) => (settings.video.hardware_acceleration = hardware)}
+            ariaLabel={t(locale, "batch.settings.hardware")}
+          />
+          <small class="option-hint">
+            {#if selectedBackendUnavailable}
+              {selectedBackendCapability?.reason ?? t(locale, "batch.settings.hardwareUnavailableHint")}
+            {:else}
+              {format(locale, "batch.settings.hardwareResolved", { backend: backendLabel(resolvedBackend) })}
+            {/if}
+          </small>
+        </div>
+
         <label class="field-label">
-          {format(locale, "batch.settings.crf", { value: settings.video.crf })}
+          {format(
+            locale,
+            resolvedBackend === "software"
+              ? "batch.settings.crf"
+              : "batch.settings.hardwareQuality",
+            { value: settings.video.crf },
+          )}
           <input type="range" min="16" max="35" bind:value={settings.video.crf} />
-          <small class="option-hint">{t(locale, "batch.settings.crfHint")}</small>
+          <small class="option-hint">
+            {t(
+              locale,
+              resolvedBackend === "software"
+                ? "batch.settings.crfHint"
+                : "batch.settings.hardwareQualityHint",
+            )}
+          </small>
         </label>
 
         <div class="field-label narrow">

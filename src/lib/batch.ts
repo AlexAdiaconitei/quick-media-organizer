@@ -2,6 +2,7 @@ import { invokeLogged } from "./errorReporter";
 import { t, type Locale } from "./i18n";
 import type {
   BatchJobStatus,
+  BatchEstimate,
   BatchItemStatus,
   BatchPreset,
   BatchSettings,
@@ -28,6 +29,7 @@ export function defaultBatchSettings(): BatchSettings {
       audio_bitrate_kbps: 128,
       faststart: true,
       keep_metadata: true,
+      hardware_acceleration: "auto",
     },
     image: {
       format: "jpeg",
@@ -111,6 +113,13 @@ export function builtInPresetsFor(
 /// Settings coming back from disk may name a destructive output mode; it is
 /// downgraded so the confirmation dialog has to be answered again.
 export function sanitizeStoredSettings(settings: BatchSettings): BatchSettings {
+  const defaults = defaultBatchSettings();
+  settings = {
+    ...defaults,
+    ...settings,
+    video: { ...defaults.video, ...settings.video },
+    image: { ...defaults.image, ...settings.image },
+  };
   if (settings.output.mode === "replace_original") {
     return { ...settings, output: { mode: "subfolder", name: "_optimized" } };
   }
@@ -227,8 +236,25 @@ export function shouldFinalizeRecoveredJob(job: BatchJobStatus): boolean {
 
 export function formatFailureReport(items: BatchItemStatus[]): string {
   return items
-    .map((item) => [item.file_name, item.source_path, item.error ?? "Unknown error"].join("\n"))
+    .map((item) =>
+      [
+        item.file_name,
+        item.source_path,
+        item.encoder_backend ? `Encoder: ${item.encoder_backend}` : null,
+        item.fallback_reason ? `Fallback: ${item.fallback_reason}` : null,
+        item.error ?? "Unknown error",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    )
     .join("\n\n");
+}
+
+export async function estimateBatch(
+  paths: string[],
+  settings: BatchSettings,
+): Promise<BatchEstimate> {
+  return invokeLogged<BatchEstimate>("estimate_batch_size", { paths, settings });
 }
 
 /// How much of the source's EXIF survives a conversion to `format`.

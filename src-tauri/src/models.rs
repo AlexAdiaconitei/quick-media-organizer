@@ -207,8 +207,8 @@ pub enum UndoAction {
         stat_kind: UndoStatKind,
     },
     /// Batch conversion that replaced originals in place. `moves` restores each
-    /// backup over its original path; `remove_paths` holds converted files that
-    /// changed extension (.heic -> .jpg) and must be deleted first.
+    /// backup over its original path; `remove_paths` holds every converted file
+    /// that must be moved aside before the backups can be restored.
     ConvertMedia {
         moves: Vec<PathPair>,
         #[serde(default)]

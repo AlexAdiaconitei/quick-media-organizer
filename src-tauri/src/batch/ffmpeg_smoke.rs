@@ -9,12 +9,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+use super::estimate::estimate_batch;
 use super::runner::{
-    new_job_status, plan_items, run_job, BatchEvents, FfmpegEncoder, MediaEncoder,
+    new_job_status, plan_items, plan_items_with_capabilities, run_job, BatchEvents, FfmpegEncoder,
+    MediaEncoder,
 };
 use super::{
     BatchItemState, BatchItemStatus, BatchJobStatus, BatchProgressSummary, BatchSettings,
-    ImageFormat, OutputMode, VideoCodec,
+    HardwareAcceleration, ImageFormat, OutputMode, VideoBackend, VideoCodec,
 };
 use crate::video::{find_binary, no_window_command};
 
@@ -114,6 +116,14 @@ fn dimensions(path: &Path) -> (u32, u32) {
 }
 
 fn run(paths: Vec<String>, settings: BatchSettings) -> BatchJobStatus {
+    run_with_cancel(paths, settings, Arc::new(AtomicBool::new(false)))
+}
+
+fn run_with_cancel(
+    paths: Vec<String>,
+    settings: BatchSettings,
+    cancel: Arc<AtomicBool>,
+) -> BatchJobStatus {
     let plans = plan_items(&paths, &settings);
     let statuses: Vec<BatchItemStatus> = plans.iter().map(|p| p.status.clone()).collect();
     let job = Arc::new(Mutex::new(new_job_status(
@@ -128,10 +138,21 @@ fn run(paths: Vec<String>, settings: BatchSettings) -> BatchJobStatus {
         settings,
         Arc::new(FfmpegEncoder::locate().unwrap()),
         Arc::new(SilentEvents),
-        Arc::new(AtomicBool::new(false)),
+        cancel,
     );
     let status = job.lock().unwrap().clone();
     status
+}
+
+fn hardware_preference(backend: VideoBackend) -> HardwareAcceleration {
+    match backend {
+        VideoBackend::Software => HardwareAcceleration::Software,
+        VideoBackend::Nvidia => HardwareAcceleration::Nvidia,
+        VideoBackend::Intel => HardwareAcceleration::Intel,
+        VideoBackend::Amd => HardwareAcceleration::Amd,
+        VideoBackend::VideoToolbox => HardwareAcceleration::VideoToolbox,
+        VideoBackend::Vaapi => HardwareAcceleration::Vaapi,
+    }
 }
 
 fn lenient(output: OutputMode) -> BatchSettings {
@@ -191,6 +212,141 @@ fn ffmpeg_accepts_the_video_flags_and_downscales() {
 }
 
 #[test]
+fn mixed_mp4_mov_and_avi_sources_complete_in_one_job() {
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg not installed");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let mp4 = dir.path().join("camera-a.mp4");
+    let mov = dir.path().join("camera-b.mov");
+    let avi = dir.path().join("camera-c.avi");
+    make_video(&mp4);
+
+    let mov_status = no_window_command(&ffmpeg_bin())
+        .args(["-hide_banner", "-y", "-i"])
+        .arg(&mp4)
+        .args(["-c", "copy"])
+        .arg(&mov)
+        .status()
+        .unwrap();
+    assert!(mov_status.success(), "MOV fixture was not created");
+
+    let avi_status = no_window_command(&ffmpeg_bin())
+        .args(["-hide_banner", "-y", "-i"])
+        .arg(&mp4)
+        .args(["-c:v", "mpeg4", "-q:v", "5", "-c:a", "libmp3lame"])
+        .arg(&avi)
+        .status()
+        .unwrap();
+    assert!(avi_status.success(), "AVI fixture was not created");
+
+    let mut settings = lenient(out_dir(dir.path()));
+    settings.video.codec = VideoCodec::H264;
+    settings.video.speed_preset = "fast".into();
+    settings.video.hardware_acceleration = HardwareAcceleration::Software;
+    let paths = [&mp4, &mov, &avi]
+        .into_iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+
+    let job = run(paths, settings);
+
+    assert_eq!(job.done, 3, "mixed job failed: {:?}", job.items);
+    assert_eq!(job.failed, 0);
+    for item in job.items {
+        let output = PathBuf::from(item.output_path.unwrap());
+        assert!(output.is_file());
+        assert!(FfmpegEncoder::locate()
+            .unwrap()
+            .probe_duration(&output)
+            .is_some());
+    }
+}
+
+#[test]
+fn estimate_encodes_a_real_video_sample() {
+    let Ok(encoder) = FfmpegEncoder::locate() else {
+        eprintln!("skipping: ffmpeg not installed");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("estimate-source.mp4");
+    make_video(&source);
+    let settings = lenient(out_dir(dir.path()));
+    let capabilities = encoder.capabilities();
+
+    let estimate = estimate_batch(
+        &[source.to_string_lossy().to_string()],
+        &settings,
+        &capabilities,
+        &encoder,
+        &dir.path().join("estimate-cache"),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+
+    assert_eq!(estimate.sampled_files, 1);
+    assert_eq!(estimate.failed_samples, 0);
+    assert!(estimate.estimated_bytes_after > 0);
+}
+
+#[test]
+fn a_detected_hardware_backend_completes_a_real_encode() {
+    let Ok(encoder) = FfmpegEncoder::locate() else {
+        eprintln!("skipping: ffmpeg not installed");
+        return;
+    };
+    let capabilities = encoder.capabilities();
+    let Some((backend, codec)) = capabilities.video_backends.iter().find_map(|capability| {
+        capability
+            .available
+            .then(|| capability.codecs.first().copied())
+            .flatten()
+            .map(|codec| (capability.backend, codec))
+    }) else {
+        eprintln!("skipping: no usable hardware video encoder detected");
+        return;
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("hardware-source.mp4");
+    make_video(&source);
+    let mut settings = lenient(out_dir(dir.path()));
+    settings.video.codec = codec;
+    settings.video.hardware_acceleration = hardware_preference(backend);
+    settings.video.max_height = Some(480);
+
+    let paths = vec![source.to_string_lossy().to_string()];
+    let plans = plan_items_with_capabilities(&paths, &settings, &capabilities.video_backends);
+    let statuses = plans.iter().map(|item| item.status.clone()).collect();
+    let job = Arc::new(Mutex::new(new_job_status(
+        "hardware-smoke".into(),
+        statuses,
+        None,
+        false,
+    )));
+    run_job(
+        Arc::clone(&job),
+        plans,
+        settings,
+        Arc::new(encoder),
+        Arc::new(SilentEvents),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let result = job.lock().unwrap().clone();
+
+    assert_eq!(
+        result.failed, 0,
+        "hardware encode failed: {:?}",
+        result.items[0].error
+    );
+    assert_eq!(result.items[0].state, BatchItemState::Done);
+    assert_eq!(result.items[0].encoder_backend, Some(backend));
+}
+
+#[test]
 fn ffmpeg_accepts_stream_copy_remux() {
     if !ffmpeg_available() {
         eprintln!("skipping: ffmpeg not installed");
@@ -245,6 +401,40 @@ fn ffmpeg_accepts_the_image_flags_and_resizes_the_long_edge() {
     }
 }
 
+/// Optional bulk HEIC validation for release machines that provide a real
+/// fixture through `QMO_HEIC_TEST_FILE`. CI without that fixture still covers
+/// the capability gate and the image runner with generated formats.
+#[test]
+fn one_hundred_real_heic_files_convert_in_one_job_when_a_fixture_is_available() {
+    let Some(fixture) = std::env::var_os("QMO_HEIC_TEST_FILE").map(PathBuf::from) else {
+        eprintln!("skipping: QMO_HEIC_TEST_FILE is not set");
+        return;
+    };
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg not installed");
+        return;
+    }
+    assert!(fixture.is_file(), "HEIC fixture does not exist");
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut paths = Vec::with_capacity(100);
+    for index in 0..100 {
+        let path = dir.path().join(format!("photo-{index:03}.heic"));
+        fs::copy(&fixture, &path).unwrap();
+        paths.push(path.to_string_lossy().to_string());
+    }
+    let mut settings = lenient(out_dir(dir.path()));
+    settings.image.format = ImageFormat::Jpeg;
+    settings.image.keep_metadata = false;
+    settings.concurrency = 4;
+
+    let job = run(paths, settings);
+
+    assert_eq!(job.done, 100, "HEIC failures: {:?}", job.items);
+    assert_eq!(job.failed, 0);
+    assert_eq!(fs::read_dir(dir.path().join("out")).unwrap().count(), 100);
+}
+
 #[test]
 fn a_corrupt_source_fails_without_leaving_an_output() {
     if !ffmpeg_available() {
@@ -267,6 +457,38 @@ fn a_corrupt_source_fails_without_leaving_an_output() {
         .map(|entries| entries.filter_map(Result::ok).collect())
         .unwrap_or_default();
     assert!(produced.is_empty(), "a failed encode left files behind");
+}
+
+#[test]
+fn cancelling_a_real_encode_kills_ffmpeg_and_removes_the_temporary_file() {
+    if !ffmpeg_available() {
+        eprintln!("skipping: ffmpeg not installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("cancel-source.mp4");
+    make_video(&source);
+    let original = fs::read(&source).unwrap();
+    let mut settings = lenient(out_dir(dir.path()));
+    settings.video.codec = VideoCodec::H265;
+    settings.video.speed_preset = "slow".into();
+    settings.video.hardware_acceleration = HardwareAcceleration::Software;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let signal = Arc::clone(&cancel);
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        signal.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    let job = run_with_cancel(vec![source.to_string_lossy().to_string()], settings, cancel);
+    canceller.join().unwrap();
+
+    assert!(job.cancelled);
+    assert_eq!(fs::read(&source).unwrap(), original);
+    let output_files = fs::read_dir(dir.path().join("out"))
+        .map(|entries| entries.filter_map(Result::ok).count())
+        .unwrap_or(0);
+    assert_eq!(output_files, 0, "cancel left a temporary or final output");
 }
 
 /// Guards the check that decides whether the UI warns about HEIC.

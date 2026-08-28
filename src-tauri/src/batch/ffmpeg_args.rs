@@ -4,9 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use super::{AudioMode, VideoSettings};
 use super::{
-    AudioMode, BatchMediaType, BatchSettings, ConflictPolicy, ImageFormat, ImageSettings,
-    VideoCodec, VideoSettings,
+    BatchMediaType, BatchSettings, ConflictPolicy, ImageFormat, ImageSettings, VideoCodec,
 };
 use crate::media::{is_media_extension, is_video_extension};
 
@@ -68,97 +69,9 @@ pub fn output_extension(
 }
 
 /// ffmpeg arguments between the input and the output file.
+#[cfg(test)]
 pub fn video_flags(settings: &VideoSettings) -> Vec<String> {
-    let mut args: Vec<String> = Vec::new();
-
-    if settings.codec == VideoCodec::Copy {
-        args.extend(["-map", "0", "-c", "copy"].map(String::from));
-        if settings.faststart {
-            args.extend(["-movflags", "+faststart"].map(String::from));
-        }
-        return args;
-    }
-
-    args.extend(["-map", "0:v:0"].map(String::from));
-    if settings.audio != AudioMode::Drop {
-        args.extend(["-map", "0:a?"].map(String::from));
-    }
-    args.push("-map_metadata".into());
-    args.push(if settings.keep_metadata { "0" } else { "-1" }.into());
-
-    match settings.codec {
-        VideoCodec::H264 => {
-            args.extend(["-c:v", "libx264"].map(String::from));
-            args.push("-crf".into());
-            args.push(settings.crf.to_string());
-            args.push("-preset".into());
-            args.push(settings.speed_preset.clone());
-            args.extend(["-pix_fmt", "yuv420p"].map(String::from));
-        }
-        VideoCodec::H265 => {
-            args.extend(["-c:v", "libx265"].map(String::from));
-            args.push("-crf".into());
-            args.push(settings.crf.to_string());
-            args.push("-preset".into());
-            args.push(settings.speed_preset.clone());
-            // Without hvc1 the file will not play in QuickTime / Apple Photos.
-            args.extend(["-tag:v", "hvc1"].map(String::from));
-        }
-        VideoCodec::Av1 => {
-            args.extend(["-c:v", "libsvtav1"].map(String::from));
-            args.push("-crf".into());
-            args.push(settings.crf.to_string());
-            args.push("-preset".into());
-            args.push(svt_av1_preset(&settings.speed_preset).to_string());
-        }
-        VideoCodec::Copy => unreachable!("handled above"),
-    }
-
-    if let Some(max_height) = settings.max_height {
-        args.push("-vf".into());
-        args.push(video_scale_filter(max_height));
-    }
-
-    if let Some(fps) = settings.max_fps {
-        args.push("-r".into());
-        args.push(fps.to_string());
-    }
-
-    match settings.audio {
-        AudioMode::Copy => args.extend(["-c:a", "copy"].map(String::from)),
-        AudioMode::Aac => {
-            args.extend(["-c:a", "aac"].map(String::from));
-            args.push("-b:a".into());
-            args.push(format!("{}k", settings.audio_bitrate_kbps));
-        }
-        AudioMode::Drop => args.push("-an".into()),
-    }
-
-    if settings.faststart {
-        args.extend(["-movflags", "+faststart"].map(String::from));
-    }
-
-    args
-}
-
-/// Downscale only when the source is taller than `max_height`; `-2` keeps the
-/// aspect ratio and forces even dimensions (required by yuv420p).
-/// Expression based on purpose: it survives rotated phone footage, where the
-/// coded dimensions do not match what is displayed.
-pub fn video_scale_filter(max_height: u32) -> String {
-    format!("scale=-2:'min({max_height},ih)'")
-}
-
-/// libsvtav1 takes a numeric preset (0 slowest … 13 fastest).
-pub fn svt_av1_preset(speed_preset: &str) -> u8 {
-    match speed_preset {
-        "veryslow" | "slower" => 3,
-        "slow" => 4,
-        "medium" => 6,
-        "fast" | "faster" => 8,
-        "veryfast" | "ultrafast" => 10,
-        _ => 6,
-    }
+    super::video_backend::software_video_flags(settings)
 }
 
 pub fn image_flags(settings: &ImageSettings, out_ext: &str) -> Result<Vec<String>, String> {

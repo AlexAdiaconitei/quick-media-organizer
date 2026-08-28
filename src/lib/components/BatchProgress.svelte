@@ -2,7 +2,7 @@
   import { openPath } from "@tauri-apps/plugin-opener";
   import { format, t, type Locale } from "../i18n";
   import { formatFailureReport, formatSize, savingsPercent } from "../batch";
-  import type { BatchItemStatus, BatchJobStatus } from "../types";
+  import type { BatchItemStatus, BatchJobStatus, VideoBackend } from "../types";
 
   let {
     locale,
@@ -39,6 +39,18 @@
 
   function stateLabel(item: BatchItemStatus): string {
     return t(locale, `batch.run.state${item.state[0].toUpperCase()}${item.state.slice(1)}`);
+  }
+
+  function backendLabel(backend: VideoBackend): string {
+    const names: Record<VideoBackend, string> = {
+      software: "CPU",
+      nvidia: "NVIDIA NVENC",
+      intel: "Intel Quick Sync",
+      amd: "AMD AMF",
+      video_toolbox: "VideoToolbox",
+      vaapi: "VAAPI",
+    };
+    return names[backend];
   }
 
   async function copyFailures() {
@@ -111,6 +123,12 @@
             {stateLabel(item)} {Math.round(item.progress * 100)}%
           {:else}
             {stateLabel(item)}
+          {/if}
+          {#if item.encoder_backend}
+            · {backendLabel(item.encoder_backend)}
+          {/if}
+          {#if item.fallback_reason}
+            <span title={item.fallback_reason}> · {t(locale, "batch.run.fallbackUsed")}</span>
           {/if}
         </span>
         <span class="batch-item-size">

@@ -40,6 +40,9 @@ pub fn run() {
             app.manage(SharedErrorLog::new(error_log));
             app.manage(SharedState::new(AppState::new(app_data_dir)));
             app.manage(SharedBatchState::new(BatchRunner::new()));
+            if let Err(error) = commands::resume_interrupted_batch_job(app.handle()) {
+                eprintln!("[QMO][batch] Could not restore batch checkpoint: {error}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -76,6 +79,7 @@ pub fn run() {
             commands::save_batch_preset,
             commands::delete_batch_preset,
             commands::get_last_batch_settings,
+            commands::estimate_batch_size,
             commands::start_batch_job,
             commands::cancel_batch_job,
             commands::get_batch_job,

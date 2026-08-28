@@ -1,17 +1,29 @@
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Mutex};
-use std::time::{Duration, UNIX_EPOCH};
+use std::sync::{mpsc, Mutex, OnceLock};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use crate::batch::FfmpegCapabilities;
+use crate::batch::video_backend::{detect_video_backends, VideoEncodeAttempt};
+use crate::batch::{FfmpegCapabilities, VideoBackendCapability};
 use crate::models::{VideoPreviewInfo, VideoPreviewMode};
 
 const WEB_NATIVE_EXTENSIONS: &[&str] = &["mp4", "mov", "m4v"];
+static VIDEO_BACKENDS: OnceLock<Vec<VideoBackendCapability>> = OnceLock::new();
+
+pub struct EncodeRequest<'a> {
+    pub input: &'a Path,
+    pub output: &'a Path,
+    pub input_flags: &'a [String],
+    pub output_flags: &'a [String],
+    pub total_duration: Option<f64>,
+    pub cancel: &'a AtomicBool,
+    pub on_progress: &'a dyn Fn(f32),
+}
 
 pub struct FfmpegTools {
     ffmpeg: PathBuf,
@@ -153,16 +165,8 @@ impl FfmpegTools {
     /// `crate::batch::ffmpeg_args`). Returns [`CANCELLED`] as the error message
     /// when `cancel` is raised, so callers can tell it apart from a real
     /// failure.
-    pub fn encode(
-        &self,
-        input: &Path,
-        output: &Path,
-        flags: &[String],
-        total_duration: Option<f64>,
-        cancel: &AtomicBool,
-        on_progress: &dyn Fn(f32),
-    ) -> Result<(), String> {
-        if let Some(parent) = output.parent() {
+    pub fn encode(&self, request: EncodeRequest<'_>) -> Result<(), String> {
+        if let Some(parent) = request.output.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
 
@@ -171,13 +175,14 @@ impl FfmpegTools {
             .arg("-hide_banner")
             .arg("-nostdin")
             .arg("-y")
+            .args(request.input_flags)
             .arg("-i")
-            .arg(input)
-            .args(flags)
+            .arg(request.input)
+            .args(request.output_flags)
             .arg("-progress")
             .arg("pipe:1")
             .arg("-nostats")
-            .arg(output)
+            .arg(request.output)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -223,7 +228,7 @@ impl FfmpegTools {
         let mut killed = false;
         let mut stdout_disconnected = false;
         let status = loop {
-            if cancel.load(Ordering::Relaxed) {
+            if request.cancel.load(Ordering::Relaxed) {
                 let _ = child.kill();
                 killed = true;
                 break child
@@ -245,8 +250,8 @@ impl FfmpegTools {
 
             match progress_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(line) => {
-                    if let Some(progress) = parse_progress_line(&line, total_duration) {
-                        on_progress(progress);
+                    if let Some(progress) = parse_progress_line(&line, request.total_duration) {
+                        (request.on_progress)(progress);
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -262,7 +267,7 @@ impl FfmpegTools {
         }
 
         if status.success() {
-            on_progress(1.0);
+            (request.on_progress)(1.0);
             return Ok(());
         }
 
@@ -284,6 +289,13 @@ impl FfmpegTools {
         let version = self
             .run_text(&["-hide_banner", "-version"])
             .and_then(|text| text.lines().next().map(|l| l.trim().to_string()));
+        let video_backends = VIDEO_BACKENDS
+            .get_or_init(|| {
+                detect_video_backends(&encoders, &|attempt| {
+                    self.probe_video_encoder(attempt, Duration::from_secs(3))
+                })
+            })
+            .clone();
 
         FfmpegCapabilities {
             available: true,
@@ -295,7 +307,61 @@ impl FfmpegTools {
             // HEIC/HEIF files are ISOBMFF: ffmpeg reads them through the mov
             // demuxer plus the hevc decoder, not through a "heif" demuxer.
             heic_decode: decoders.contains("hevc") && demuxers.contains("mov,mp4"),
+            video_backends,
             version,
+        }
+    }
+
+    fn probe_video_encoder(
+        &self,
+        attempt: &VideoEncodeAttempt,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let mut command = no_window_command(&self.ffmpeg);
+        command
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .args(&attempt.input_flags)
+            .arg("-f")
+            .arg("lavfi")
+            .arg("-i")
+            .arg("color=c=black:s=64x64:r=25:d=0.08")
+            .args(&attempt.output_flags)
+            .arg("-frames:v")
+            .arg("1")
+            .arg("-f")
+            .arg("null")
+            .arg("-")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("Failed to probe hardware encoder: {error}"))?;
+        let started = Instant::now();
+        loop {
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|error| format!("Failed to poll hardware probe: {error}"))?
+            {
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(stderr.trim().to_string())
+                };
+            }
+            if started.elapsed() >= timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Hardware encoder probe timed out.".into());
+            }
+            std::thread::sleep(Duration::from_millis(25));
         }
     }
 

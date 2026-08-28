@@ -21,6 +21,19 @@ pub fn apply_timestamps(path: &Path, snap: &TimestampSnapshot) -> io::Result<()>
     filetime::set_file_times(path, snap.accessed, snap.modified)
 }
 
+pub fn copy_file_preserve(from: &Path, to: &Path) -> io::Result<u64> {
+    let snap = read_timestamps(from)?;
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let copied = fs::copy(from, to)?;
+    if let Err(error) = apply_timestamps(to, &snap) {
+        let _ = fs::remove_file(to);
+        return Err(error);
+    }
+    Ok(copied)
+}
+
 pub fn move_file_preserve(from: &Path, to: &Path) -> io::Result<()> {
     let snap = read_timestamps(from)?;
 
@@ -34,8 +47,7 @@ pub fn move_file_preserve(from: &Path, to: &Path) -> io::Result<()> {
             Ok(())
         }
         Err(err) if is_cross_device(&err) => {
-            fs::copy(from, to)?;
-            apply_timestamps(to, &snap)?;
+            copy_file_preserve(from, to)?;
             if let Err(remove_err) = fs::remove_file(from) {
                 let _ = fs::remove_file(to);
                 return Err(remove_err);

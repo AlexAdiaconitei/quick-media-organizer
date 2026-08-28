@@ -1,14 +1,16 @@
 # Plan de implementación — Modo Lote (optimización/conversión masiva)
 
-Estado: **fases 1 y 2 implementadas; fase 3 parcial** (2026-08-27). Plan original: 2026-08-17.
+Estado: **fases 1, 2 y 3 implementadas** (2026-08-28). Plan original: 2026-08-17.
 
 ## 0. Estado de implementación
 
-Implementado: `src-tauri/src/batch/` (`mod.rs`, `ffmpeg_args.rs`, `runner.rs`),
+Implementado: `src-tauri/src/batch/` (`mod.rs`, `ffmpeg_args.rs`, `runner.rs`,
+`video_backend.rs`, `estimate.rs`, `checkpoint.rs`),
 `FfmpegTools::encode` con progreso y cancelación, 16 comandos Tauri,
 `UndoAction::ConvertMedia`, presets persistidos, y la UI completa
 (`BatchPanel`, `BatchSelectGrid`, `BatchSettingsForm`, `BatchProgress`,
-`BatchReplaceConfirmDialog`) con atajo Ctrl/⌘+B. 48 tests en `cargo test`.
+`BatchReplaceConfirmDialog`) con atajo Ctrl/⌘+B. La validación actual suma
+71 tests Rust y 22 tests de frontend.
 
 Añadido sobre el plan, tras revisar el flujo real "carpeta entera → carpeta nueva":
 
@@ -22,10 +24,19 @@ Añadido sobre el plan, tras revisar el flujo real "carpeta entera → carpeta n
 - La selección expande todos los paths del `MediaItem`, así una Live Photo
   (`.heic` + `.mov`) se convierte entera y no se descabala.
 
-Fase 3 implementada en parte: AV1, informes `.md`/`.csv` por job y reenganche
-tras recargar la ventana. Pendiente: aceleración por hardware, estimación
-previa, reanudación después de cerrar por completo la aplicación, captura de
-documentación y el QA manual de §10.
+Fase 3 completa: AV1, aceleración por hardware, estimación previa, informes
+`.md`/`.csv`, reenganche tras recargar la ventana y reanudación tras cerrar el
+proceso. La aceleración detecta un dispositivo utilizable mediante una
+codificación real de un frame, admite NVENC/QSV/AMF/VideoToolbox/VAAPI, limita
+a uno los encodes GPU y aplica fallback tipado a CPU/AAC. El backend efectivo
+y el motivo del fallback quedan en el progreso y el informe.
+
+La estimación codifica hasta tres muestras de vídeo de tres segundos y cinco
+imágenes completas, con los mismos ajustes y fallbacks del job. El checkpoint
+se actualiza después de cada archivo terminal, conserva una generación previa
+por si la escritura se interrumpe y, al arrancar, elimina el temporal incompleto
+y reencola solo los archivos pendientes. La finalización y el registro de undo
+son idempotentes para que un cierre entre ambos pasos no duplique la acción.
 
 Las cadenas de argumentos **sí** se ejecutan contra un binario real:
 `batch/ffmpeg_smoke.rs` codifica clips e imágenes de prueba con el ffmpeg que
@@ -82,7 +93,9 @@ pub enum BatchMediaType { Video, Image }
 
 pub enum VideoCodec { H264, H265, Av1, Copy }        // Copy = solo remux/faststart
 pub enum ImageFormat { Jpeg, Webp, Avif, Png, Keep }
-pub enum EncoderPreference { Software, Hardware, Auto } // fase 3
+pub enum HardwareAcceleration {
+    Auto, Software, Nvidia, Intel, Amd, VideoToolbox, Vaapi
+}
 
 pub struct VideoSettings {
     codec: VideoCodec,
@@ -255,7 +268,7 @@ Segunda barrera en el momento de ejecutar: si al pulsar **Ejecutar** el modo es 
 | Pérdida de datos al reemplazar originales | Opt-in + backup + verificación de salida (probe) + rollback + entrada de undo. Nunca borrar el original antes de validar el temporal. |
 | Bloqueo de UI por mutex | Estado de lote independiente; jamás llamar a ffmpeg con el lock de `AppState` tomado. |
 | Recalentar/saturar la máquina | Concurrencia por defecto = mitad de cores; documentar que x265/AV1 ya son multihilo. |
-| Job huérfano tras recarga de ventana | `get_batch_job` + job persistido en memoria del backend; los hijos ffmpeg siguen bajo control del runner. |
+| Job huérfano tras recarga o cierre del proceso | `get_batch_job` para recarga de ventana y checkpoint en disco por archivo terminal para reanudar tras abrir la aplicación. |
 | Rutas con caracteres raros / Unicode en Windows | Pasar `Path` a `Command::arg` (no interpolar strings), como ya hace `video.rs`. |
 | Consolas negras en Windows | `CREATE_NO_WINDOW` en todos los spawns. |
 | Sesión/undo desincronizados si se reemplazan archivos de la cola | Tras el job, refrescar tamaños (`refresh_item_size`) y re-escanear si `ReplaceOriginal` cambió extensiones; si cambian nombres, invalidar posición de sesión igual que hace `open_folder`. |
@@ -269,7 +282,10 @@ Segunda barrera en el momento de ejecutar: si al pulsar **Ejecutar** el modo es 
 JPEG/WebP/AVIF/PNG, `max_edge`, metadatos; `OutputMode::ReplaceOriginal` con backup+undo y el diálogo de confirmación de §7.1 (entra en la misma fase que el modo destructivo, no después); presets built-in y guardados; `skip_if_larger`; `ffmpeg_capabilities` y aviso HEIC; miniaturas en la rejilla; resumen de ahorro.
 
 **Fase 3 — Pulido.**
-AV1, aceleración hardware (`h264_nvenc`, `hevc_videotoolbox`, `hevc_qsv`) con detección y fallback a software; estimación previa de tamaño (encode de 3 s de muestra); informe `.md`/`.csv` del job en `logs/`; reanudar job interrumpido; documentación (README/README.es + captura nueva vía `scripts/capture-screenshots.mjs`).
+Completada: AV1; NVENC, QSV, AMF, VideoToolbox y VAAPI con detección real y
+fallback a software; estimación previa con muestras de tres segundos; informes
+`.md`/`.csv` en `logs/`; checkpoint y reanudación del job; README en inglés y
+español; capturas regeneradas con `scripts/capture-screenshots.mjs`.
 
 ## 10. Tests y QA
 
@@ -280,19 +296,29 @@ Unitarios Rust (sin ffmpeg, siguiendo el patrón de `media.rs:436`):
 - Gate de confirmación: `ReplaceOriginal { confirmed: false }` rechazado en `start_batch_job` antes de crear cualquier archivo o backup.
 - Runner con un "encoder" inyectado (trait `Encoder` mockeado): progreso agregado, cancelación deja pendientes en `Cancelled`, `skip_if_larger` descarta, rollback restaura el original.
 
-Integración manual (checklist):
-1. 20 vídeos mixtos (mp4/mov/avi) → subcarpeta, comprobar reproducibilidad y ahorro.
-2. Cancelar a mitad → no queda ningún `.qmo-tmp-*`, originales intactos.
-3. `ReplaceOriginal` + undo → archivo vuelve al original byte a byte, timestamps preservados.
-3b. Diálogo de §7.1: cancelar deja el modo en `Subfolder`; `Esc` = cancelar; confirmar sin marcar el checkbox es imposible; preset guardado con `ReplaceOriginal` vuelve a pedir confirmación al cargarse; `start_batch_job` con `confirmed: false` devuelve error y no toca ningún archivo.
-4. 100 HEIC → JPEG con y sin soporte HEIC en ffmpeg.
-5. Sin ffmpeg instalado → mensaje claro, panel no arranca job.
-6. Rutas con acentos/emoji y rutas largas (>260 chars) en Windows.
-7. `npm run check` limpio; `cargo test` verde.
+Validación de cierre:
+
+- [x] Job real con fuentes MP4, MOV y AVI; todos los resultados se vuelven a
+  abrir con ffprobe.
+- [x] Cancelación durante un encode x265 real; el proceso termina, no quedan
+  temporales y el original permanece byte a byte.
+- [x] `ReplaceOriginal` y undo; restaura bytes y fecha de modificación. También
+  se cubren colisiones, rollback y finalización idempotente.
+- [x] Barreras del diálogo y del backend: sin confirmación no se crea ningún
+  archivo; los presets destructivos pierden `confirmed` al persistirse.
+- [x] 100 HEIC reales a JPEG en un solo job mediante el smoke test opcional
+  `QMO_HEIC_TEST_FILE`; el gate de capacidades cubre el caso sin decoder.
+- [x] FFmpeg ausente devuelve capacidades no disponibles y la UI desactiva el
+  arranque con un mensaje específico.
+- [x] Rutas con acentos, emoji y rutas Windows de más de 260 caracteres.
+- [x] `pnpm test`, `pnpm check`, `pnpm build:web`, `cargo test` y
+  `cargo clippy --all-targets -- -D warnings` en verde.
 
 ## 11. Fuera de alcance (por ahora)
 
-Recorte/rotación por lote, watermarks, subida a la nube, ffmpeg embebido en el bundle (aumenta ~80 MB el instalador; alternativa futura: descarga opcional al primer uso), colas programadas.
+Recorte/rotación por lote, watermarks, subida a la nube, integración de libav
+dentro del proceso y colas programadas. La edición Standard ya distribuye
+FFmpeg como ejecutable separado; la Lite usa la instalación del sistema.
 
 ## 12. Release
 

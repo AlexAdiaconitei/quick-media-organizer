@@ -1,8 +1,11 @@
+pub mod checkpoint;
+pub mod estimate;
 pub mod ffmpeg_args;
 #[cfg(test)]
 mod ffmpeg_smoke;
 pub mod report;
 pub mod runner;
+pub mod video_backend;
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +27,44 @@ pub enum VideoCodec {
     Av1,
     /// Stream copy: only remux (fast, lossless, small savings).
     Copy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HardwareAcceleration {
+    #[default]
+    Auto,
+    Software,
+    Nvidia,
+    Intel,
+    Amd,
+    VideoToolbox,
+    Vaapi,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoBackend {
+    Software,
+    Nvidia,
+    Intel,
+    Amd,
+    VideoToolbox,
+    Vaapi,
+}
+
+impl VideoBackend {
+    pub fn is_hardware(self) -> bool {
+        self != Self::Software
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoBackendCapability {
+    pub backend: VideoBackend,
+    pub codecs: Vec<VideoCodec>,
+    pub available: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -112,6 +153,8 @@ pub struct VideoSettings {
     pub faststart: bool,
     #[serde(default = "default_true")]
     pub keep_metadata: bool,
+    #[serde(default)]
+    pub hardware_acceleration: HardwareAcceleration,
 }
 
 fn default_crf() -> u8 {
@@ -138,6 +181,7 @@ impl Default for VideoSettings {
             audio_bitrate_kbps: default_audio_bitrate(),
             faststart: true,
             keep_metadata: true,
+            hardware_acceleration: HardwareAcceleration::Auto,
         }
     }
 }
@@ -241,6 +285,10 @@ pub struct BatchItemStatus {
     pub size_after: Option<u64>,
     pub output_path: Option<String>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub encoder_backend: Option<VideoBackend>,
+    #[serde(default)]
+    pub fallback_reason: Option<String>,
 }
 
 /// One in-place replacement, kept so the session can register it for undo.
@@ -314,6 +362,15 @@ pub struct BatchPreset {
     pub settings: BatchSettings,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchEstimate {
+    pub bytes_before: u64,
+    pub estimated_bytes_after: u64,
+    pub sampled_files: usize,
+    pub total_files: usize,
+    pub failed_samples: usize,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FfmpegCapabilities {
     pub available: bool,
@@ -323,5 +380,28 @@ pub struct FfmpegCapabilities {
     pub webp: bool,
     pub avif: bool,
     pub heic_decode: bool,
+    #[serde(default)]
+    pub video_backends: Vec<VideoBackendCapability>,
     pub version: Option<String>,
+}
+
+#[cfg(test)]
+mod settings_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn saved_video_settings_without_hardware_preference_migrate_to_auto() {
+        let settings: VideoSettings = serde_json::from_value(serde_json::json!({
+            "codec": "h265",
+            "crf": 28,
+            "speed_preset": "medium",
+            "audio": "aac",
+            "audio_bitrate_kbps": 128,
+            "faststart": true,
+            "keep_metadata": true
+        }))
+        .unwrap();
+
+        assert_eq!(settings.hardware_acceleration, HardwareAcceleration::Auto);
+    }
 }

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{BatchItemState, BatchJobStatus};
+use super::{BatchItemState, BatchJobStatus, VideoBackend};
 
 /// Writes both a readable report and a spreadsheet-friendly report. Reports
 /// are append-only artifacts: rerunning a job gets a new job id and never
@@ -44,6 +44,12 @@ fn markdown(job: &BatchJobStatus) -> String {
         if let Some(error) = &item.error {
             output.push_str(&format!(" — {}", escape_markdown(error)));
         }
+        if let Some(backend) = item.encoder_backend {
+            output.push_str(&format!(" — encoder: {}", backend_name(backend)));
+        }
+        if let Some(reason) = &item.fallback_reason {
+            output.push_str(&format!(" — fallback: {}", escape_markdown(reason)));
+        }
         output.push('\n');
     }
     output
@@ -51,7 +57,7 @@ fn markdown(job: &BatchJobStatus) -> String {
 
 fn csv(job: &BatchJobStatus) -> String {
     let mut output =
-        "file_name,source_path,state,size_before,size_after,output_path,error\n".to_string();
+        "file_name,source_path,state,size_before,size_after,output_path,encoder_backend,fallback_reason,error\n".to_string();
     for item in &job.items {
         let fields = [
             item.file_name.clone(),
@@ -62,12 +68,28 @@ fn csv(job: &BatchJobStatus) -> String {
                 .map(|value| value.to_string())
                 .unwrap_or_default(),
             item.output_path.clone().unwrap_or_default(),
+            item.encoder_backend
+                .map(backend_name)
+                .unwrap_or_default()
+                .to_string(),
+            item.fallback_reason.clone().unwrap_or_default(),
             item.error.clone().unwrap_or_default(),
         ];
         output.push_str(&fields.map(|value| csv_field(&value)).join(","));
         output.push('\n');
     }
     output
+}
+
+fn backend_name(backend: VideoBackend) -> &'static str {
+    match backend {
+        VideoBackend::Software => "software",
+        VideoBackend::Nvidia => "nvidia_nvenc",
+        VideoBackend::Intel => "intel_qsv",
+        VideoBackend::Amd => "amd_amf",
+        VideoBackend::VideoToolbox => "apple_videotoolbox",
+        VideoBackend::Vaapi => "vaapi",
+    }
 }
 
 fn state_name(state: BatchItemState) -> &'static str {
@@ -95,7 +117,7 @@ fn escape_markdown(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::batch::{BatchItemStatus, BatchMediaType};
+    use crate::batch::{BatchItemStatus, BatchMediaType, VideoBackend};
 
     #[test]
     fn writes_markdown_and_csv_with_failure_details() {
@@ -125,6 +147,8 @@ mod tests {
                 size_after: None,
                 output_path: None,
                 error: Some("bad \"codec\"".into()),
+                encoder_backend: Some(VideoBackend::Software),
+                fallback_reason: Some("GPU unavailable".into()),
             }],
             replacements: vec![],
             finalized: false,
@@ -137,5 +161,7 @@ mod tests {
         assert!(markdown.contains("bad \"codec\""));
         assert!(csv.contains("\"bad \"\"codec\"\"\""));
         assert!(csv.contains("\"C:\\camera\\broken.mov\""));
+        assert!(markdown.contains("encoder: software"));
+        assert!(csv.contains("\"GPU unavailable\""));
     }
 }

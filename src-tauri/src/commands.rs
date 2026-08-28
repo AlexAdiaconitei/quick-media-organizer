@@ -1,9 +1,12 @@
+use crate::batch::checkpoint::{BatchCheckpoint, BatchCheckpointStore};
 use crate::batch::runner::{
-    new_job_status, plan_items, BatchEvents, FfmpegEncoder, MediaEncoder, SharedBatchState,
+    new_job_status, plan_items_with_capabilities, BatchEvents, FfmpegEncoder, MediaEncoder,
+    SharedBatchState,
 };
+use crate::batch::video_backend::resolve_video_encoding;
 use crate::batch::{
-    BatchItemStatus, BatchJobStatus, BatchMediaType, BatchPreset, BatchProgressSummary,
-    BatchSettings, FfmpegCapabilities, ImageFormat, OutputMode,
+    BatchEstimate, BatchItemStatus, BatchJobStatus, BatchMediaType, BatchPreset,
+    BatchProgressSummary, BatchSettings, FfmpegCapabilities, ImageFormat, OutputMode,
 };
 use crate::error_log::{ErrorEntry, SharedErrorLog};
 use crate::models::{
@@ -336,11 +339,53 @@ fn requests_unavailable_avif_metadata(paths: &[String], settings: &BatchSettings
 struct WindowEvents {
     app: AppHandle,
     report_dirs: Vec<PathBuf>,
+    checkpoint: Option<CheckpointWriter>,
+}
+
+#[derive(Clone)]
+struct CheckpointWriter {
+    store: BatchCheckpointStore,
+    checkpoint: Arc<Mutex<BatchCheckpoint>>,
+}
+
+impl CheckpointWriter {
+    fn save_job(&self, job: BatchJobStatus) {
+        let Ok(mut checkpoint) = self.checkpoint.lock() else {
+            return;
+        };
+        checkpoint.update_job(job);
+        if let Err(error) = self.store.save(&checkpoint) {
+            eprintln!("[QMO][batch] {error}");
+        }
+    }
 }
 
 impl BatchEvents for WindowEvents {
     fn item(&self, item: &BatchItemStatus) {
         let _ = self.app.emit("batch://item", item);
+        if matches!(
+            item.state,
+            crate::batch::BatchItemState::Done
+                | crate::batch::BatchItemState::Skipped
+                | crate::batch::BatchItemState::Failed
+                | crate::batch::BatchItemState::Cancelled
+        ) {
+            let job_id = self
+                .checkpoint
+                .as_ref()
+                .and_then(|writer| writer.checkpoint.lock().ok().map(|c| c.job.job_id.clone()));
+            if let Some(job_id) = job_id {
+                let snapshot = self
+                    .app
+                    .state::<SharedBatchState>()
+                    .lock()
+                    .ok()
+                    .and_then(|runner| runner.snapshot(&job_id));
+                if let (Some(writer), Some(snapshot)) = (&self.checkpoint, snapshot) {
+                    writer.save_job(snapshot);
+                }
+            }
+        }
     }
 
     fn progress(&self, summary: &BatchProgressSummary) {
@@ -348,6 +393,9 @@ impl BatchEvents for WindowEvents {
     }
 
     fn done(&self, job: &BatchJobStatus) {
+        if let Some(writer) = &self.checkpoint {
+            writer.save_job(job.clone());
+        }
         for dir in &self.report_dirs {
             if let Err(error) = crate::batch::report::write_batch_report(dir, job) {
                 eprintln!("[QMO][batch] {error}");
@@ -355,6 +403,114 @@ impl BatchEvents for WindowEvents {
         }
         let _ = self.app.emit("batch://done", job);
     }
+}
+
+fn batch_report_dirs(app: &AppHandle) -> Vec<PathBuf> {
+    let mut dirs = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| vec![dir.join("logs")])
+        .unwrap_or_default();
+    if cfg!(debug_assertions) {
+        if let Ok(cwd) = std::env::current_dir() {
+            let debug_dir = cwd.join("logs");
+            if !dirs.contains(&debug_dir) {
+                dirs.push(debug_dir);
+            }
+        }
+    }
+    dirs
+}
+
+fn window_events(app: &AppHandle, checkpoint: Option<CheckpointWriter>) -> Arc<WindowEvents> {
+    Arc::new(WindowEvents {
+        app: app.clone(),
+        report_dirs: batch_report_dirs(app),
+        checkpoint,
+    })
+}
+
+/// Restores the active checkpoint during desktop startup. A completed job is
+/// registered so the UI can finalize it. A process-interrupted job restarts
+/// only its pending files with the output paths saved before shutdown.
+pub fn resume_interrupted_batch_job(app: &AppHandle) -> Result<(), String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not resolve app data folder: {error}"))?;
+    let store = BatchCheckpointStore::new(&app_data_dir);
+    let Some(mut checkpoint) = store.load()? else {
+        return Ok(());
+    };
+    if checkpoint.job.finalized {
+        return store.clear();
+    }
+
+    let was_running = checkpoint.job.running;
+    let plans = was_running.then(|| checkpoint.prepare_resume());
+    let job_id = checkpoint.job.job_id.clone();
+    let settings = checkpoint.settings.clone();
+    let job = Arc::new(Mutex::new(checkpoint.job.clone()));
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    if !was_running {
+        let batch = app.state::<SharedBatchState>();
+        batch
+            .lock()
+            .map_err(|error| error.to_string())?
+            .register(job, cancel, &job_id);
+        return Ok(());
+    }
+
+    let checkpoint = Arc::new(Mutex::new(checkpoint));
+    {
+        let guard = checkpoint.lock().map_err(|error| error.to_string())?;
+        store.save(&guard)?;
+    }
+    {
+        let batch = app.state::<SharedBatchState>();
+        batch.lock().map_err(|error| error.to_string())?.register(
+            Arc::clone(&job),
+            Arc::clone(&cancel),
+            &job_id,
+        );
+    }
+    let writer = CheckpointWriter { store, checkpoint };
+    let events = window_events(app, Some(writer.clone()));
+    let Some(plans) = plans else {
+        return Ok(());
+    };
+    let encoder = match FfmpegEncoder::locate() {
+        Ok(encoder) => Arc::new(encoder),
+        Err(error) => {
+            let snapshot = {
+                let mut guard = job.lock().map_err(|lock_error| lock_error.to_string())?;
+                for item in &mut guard.items {
+                    if item.state == crate::batch::BatchItemState::Pending {
+                        item.state = crate::batch::BatchItemState::Failed;
+                        item.error = Some(format!("Could not resume after restart: {error}"));
+                    }
+                }
+                guard.running = false;
+                guard.failed = guard
+                    .items
+                    .iter()
+                    .filter(|item| item.state == crate::batch::BatchItemState::Failed)
+                    .count();
+                guard.finished_at = Some(chrono::Local::now().to_rfc3339());
+                guard.clone()
+            };
+            writer.save_job(snapshot);
+            return Ok(());
+        }
+    };
+
+    let thread_job = Arc::clone(&job);
+    std::thread::spawn(move || {
+        crate::batch::runner::run_job(thread_job, plans, settings, encoder, events, cancel);
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -455,6 +611,44 @@ pub fn get_last_batch_settings(
         .clone())
 }
 
+#[tauri::command]
+pub async fn estimate_batch_size(
+    app: AppHandle,
+    paths: Vec<String>,
+    settings: BatchSettings,
+) -> Result<BatchEstimate, String> {
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        (|| {
+            if paths.is_empty() {
+                return Err("Select at least one photo or video.".into());
+            }
+            let encoder = FfmpegEncoder::locate()?;
+            let capabilities = encoder.capabilities();
+            let cache = worker_app
+                .path()
+                .app_cache_dir()
+                .map_err(|error| format!("Could not resolve cache folder: {error}"))?
+                .join("batch-estimates");
+            crate::batch::estimate::estimate_batch(
+                &paths,
+                &settings,
+                &capabilities,
+                &encoder,
+                &cache,
+                &AtomicBool::new(false),
+            )
+        })()
+    })
+    .await
+    .map_err(|error| format!("Estimate worker failed: {error}"))?;
+    if let Err(error) = &result {
+        let log = app.state::<SharedErrorLog>();
+        log_rust_error(&log, "estimate_batch_size", error);
+    }
+    result
+}
+
 /// Starts a batch job. Long encodes run on their own threads: the app-state
 /// mutex is never held while ffmpeg works.
 #[tauri::command]
@@ -486,7 +680,8 @@ pub fn start_batch_job(
             }
 
             let encoder = Arc::new(FfmpegEncoder::locate()?);
-            if contains_heic(&paths) && !encoder.capabilities().heic_decode {
+            let capabilities = encoder.capabilities();
+            if contains_heic(&paths) && !capabilities.heic_decode {
                 return Err(
                 "This FFmpeg build cannot read HEIC/HEIF. Install a full FFmpeg build before converting those files."
                     .into(),
@@ -498,21 +693,33 @@ pub fn start_batch_job(
                         .into(),
                 );
             }
+            let contains_video = paths.iter().any(|path| {
+                crate::batch::ffmpeg_args::classify_path(Path::new(path))
+                    == Some(BatchMediaType::Video)
+            });
+            if contains_video {
+                resolve_video_encoding(&settings.video, &capabilities.video_backends)?;
+            }
 
             {
                 let runner = batch.lock().map_err(|e| e.to_string())?;
                 if let Some(active) = runner.active_job_id() {
-                    if runner
-                        .snapshot(&active)
-                        .map(|job| job.running)
-                        .unwrap_or(false)
-                    {
-                        return Err("A batch job is already running.".into());
+                    if let Some(job) = runner.snapshot(&active) {
+                        if job.running {
+                            return Err("A batch job is already running.".into());
+                        }
+                        if !job.finalized {
+                            return Err(
+                                "Finish the previous batch result before starting another job."
+                                    .into(),
+                            );
+                        }
                     }
                 }
             }
 
-            let plans = plan_items(&paths, &settings);
+            let plans =
+                plan_items_with_capabilities(&paths, &settings, &capabilities.video_backends);
             let statuses: Vec<BatchItemStatus> =
                 plans.iter().map(|planned| planned.status.clone()).collect();
             let output_dir = plans
@@ -534,35 +741,30 @@ pub fn start_batch_job(
             )));
             let cancel = Arc::new(AtomicBool::new(false));
 
-            {
-                let mut runner = batch.lock().map_err(|e| e.to_string())?;
-                runner.register(Arc::clone(&job), Arc::clone(&cancel), &job_id);
-            }
-
             if let Ok(mut guard) = state.lock() {
                 let _ = guard.remember_batch_settings(&settings);
             }
 
             let snapshot = job.lock().map_err(|e| e.to_string())?.clone();
-
-            let mut report_dirs = app
+            let app_data_dir = app
                 .path()
                 .app_data_dir()
-                .ok()
-                .map(|dir| vec![dir.join("logs")])
-                .unwrap_or_default();
-            if cfg!(debug_assertions) {
-                if let Ok(cwd) = std::env::current_dir() {
-                    let debug_dir = cwd.join("logs");
-                    if !report_dirs.contains(&debug_dir) {
-                        report_dirs.push(debug_dir);
-                    }
-                }
+                .map_err(|error| format!("Could not resolve app data folder: {error}"))?;
+            let store = BatchCheckpointStore::new(&app_data_dir);
+            let checkpoint = Arc::new(Mutex::new(BatchCheckpoint::new(
+                snapshot.clone(),
+                settings.clone(),
+                &plans,
+            )));
+            {
+                let guard = checkpoint.lock().map_err(|error| error.to_string())?;
+                store.save(&guard)?;
             }
-            let events = Arc::new(WindowEvents {
-                app: app.clone(),
-                report_dirs,
-            });
+            {
+                let mut runner = batch.lock().map_err(|e| e.to_string())?;
+                runner.register(Arc::clone(&job), Arc::clone(&cancel), &job_id);
+            }
+            let events = window_events(&app, Some(CheckpointWriter { store, checkpoint }));
             let thread_job = Arc::clone(&job);
             std::thread::spawn(move || {
                 crate::batch::runner::run_job(thread_job, plans, settings, encoder, events, cancel);
@@ -594,6 +796,7 @@ pub fn get_batch_job(
 /// replaced originals and rebuilds the queue. Safe to call twice.
 #[tauri::command]
 pub fn finalize_batch_job(
+    app: AppHandle,
     state: State<'_, SharedState>,
     batch: State<'_, SharedBatchState>,
     log: State<'_, SharedErrorLog>,
@@ -603,19 +806,18 @@ pub fn finalize_batch_job(
         &log,
         "finalize_batch_job",
         (|| {
-            let replacements = {
+            let (job_handle, replacements) = {
                 let runner = batch.lock().map_err(|e| e.to_string())?;
                 let handle = runner
                     .job(&job_id)
                     .ok_or_else(|| format!("Unknown batch job: {job_id}"))?;
-                let mut guard = handle.lock().map_err(|e| e.to_string())?;
+                let guard = handle.lock().map_err(|e| e.to_string())?;
                 if guard.running {
                     return Err("The batch job is still running.".into());
                 }
-                if guard.finalized {
+                let replacements = if guard.finalized {
                     Vec::new()
                 } else {
-                    guard.finalized = true;
                     guard
                         .replacements
                         .iter()
@@ -627,17 +829,35 @@ pub fn finalize_batch_job(
                             )
                         })
                         .collect()
-                }
+                };
+                drop(guard);
+                (handle, replacements)
             };
-
-            {
-                let mut runner = batch.lock().map_err(|e| e.to_string())?;
-                runner.clear_active(&job_id);
-            }
 
             let mut guard = state.lock().map_err(|e| e.to_string())?;
             guard.apply_batch_replacements(&replacements)?;
-            Ok(guard.to_frontend_state())
+            let frontend = guard.to_frontend_state();
+            drop(guard);
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| format!("Could not resolve app data folder: {error}"))?;
+            let store = BatchCheckpointStore::new(&app_data_dir);
+            if let Some(mut checkpoint) = store.load()? {
+                checkpoint.job.finalized = true;
+                store.save(&checkpoint)?;
+            }
+
+            job_handle
+                .lock()
+                .map_err(|error| error.to_string())?
+                .finalized = true;
+            batch
+                .lock()
+                .map_err(|error| error.to_string())?
+                .clear_active(&job_id);
+            store.clear()?;
+            Ok(frontend)
         })(),
     )
 }
