@@ -6,6 +6,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// pnpm forwards the "--" separator to the script, so drop it here.
+export const cliArguments = (argv = process.argv.slice(2)) =>
+  argv.filter((argument) => argument !== "--");
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
 export function projectVersions(root = ROOT) {
@@ -142,12 +145,12 @@ function writeGithubOutputs(path, metadata) {
 }
 
 export function main(
-  requestedVersion = process.argv[2],
-  prereleaseInput = process.argv[3],
+  requestedVersion = cliArguments()[0],
+  prereleaseInput = cliArguments()[1],
 ) {
   if (!requestedVersion) {
     throw new Error(
-      "Pass a release version, for example: pnpm verify:release -- 1.1.1-alpha true",
+      "Pass a release version, for example: pnpm verify:release 1.1.1-alpha true",
     );
   }
 

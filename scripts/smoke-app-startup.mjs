@@ -4,7 +4,9 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const executable = process.argv[2] ? resolve(process.argv[2]) : null;
+// pnpm forwards the "--" separator to the script, so drop it here.
+const [executablePath] = process.argv.slice(2).filter((argument) => argument !== "--");
+const executable = executablePath ? resolve(executablePath) : null;
 const waitMs = Number(process.env.QMO_STARTUP_SMOKE_MS ?? 4000);
 
 if (!executable) {

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   changelogNotes,
+  cliArguments,
   normalizeReleaseVersion,
   releaseMetadata,
 } from "./verify-release-version.mjs";
@@ -103,4 +104,9 @@ test("a release without changelog notes is rejected", () => {
     () => changelogNotes("# Changelog\n\n## [1.1.1]\n", "1.1.1"),
     /section for 1\.1\.1 is empty/,
   );
+});
+
+test("the \"--\" separator pnpm forwards is ignored", () => {
+  assert.deepEqual(cliArguments(["--", "1.1.1", "true"]), ["1.1.1", "true"]);
+  assert.deepEqual(cliArguments(["1.1.1"]), ["1.1.1"]);
 });

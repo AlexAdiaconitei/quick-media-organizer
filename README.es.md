@@ -204,7 +204,7 @@ mal configurada.
 3. Comprueba las dos cosas en local:
 
    ```bash
-   pnpm verify:release -- 0.2.0
+   pnpm verify:release 0.2.0
    ```
 
 4. Publícala de cualquiera de las dos formas:

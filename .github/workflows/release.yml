@@ -44,7 +44,7 @@ jobs:
 
       - name: Resolve the release metadata
         id: metadata
-        run: pnpm verify:release -- "${{ inputs.version || github.ref_name }}" "${{ inputs.prerelease || 'false' }}"
+        run: pnpm verify:release "${{ inputs.version || github.ref_name }}" "${{ inputs.prerelease || 'false' }}"
 
   release:
     needs: validate
@@ -73,7 +73,7 @@ jobs:
       - uses: pnpm/setup@v1
         with:
           runtime: node@22
-          cache: pnpm
+          cache: true
           install: false
 
       - uses: dtolnay/rust-toolchain@stable
@@ -91,7 +91,7 @@ jobs:
       - name: Configure the release version
         env:
           RELEASE_CONFIG_PATH: src-tauri/tauri.release.conf.json
-        run: pnpm verify:release -- "${{ needs.validate.outputs.version }}" "${{ needs.validate.outputs.prerelease }}"
+        run: pnpm verify:release "${{ needs.validate.outputs.version }}" "${{ needs.validate.outputs.prerelease }}"
 
       - name: Fetch FFmpeg for bundling
         run: pnpm fetch-ffmpeg
@@ -120,7 +120,7 @@ jobs:
         run: pnpm tauri build --no-bundle ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json --config src-tauri/tauri.release.conf.json ${{ steps.updater.outputs.config }}
 
       - name: Verify the release application starts
-        run: pnpm smoke:startup -- "${{ matrix.executable }}"
+        run: pnpm smoke:startup "${{ matrix.executable }}"
 
       - uses: tauri-apps/tauri-action@v1
         env:

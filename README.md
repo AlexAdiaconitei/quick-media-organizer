@@ -204,7 +204,7 @@ a misconfigured release.
 3. Check both locally:
 
    ```bash
-   pnpm verify:release -- 0.2.0
+   pnpm verify:release 0.2.0
    ```
 
 4. Publish it either way:
