@@ -1,19 +1,38 @@
 name: Release
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.version || github.ref_name }}
   cancel-in-progress: false
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 0.2.0 or 0.2.1-alpha.1"
+        required: true
+        type: string
+      prerelease:
+        description: "Publish as a prerelease"
+        type: boolean
+        default: false
 
 jobs:
+  # Resolves one version for every later job: it must match package.json,
+  # Cargo.toml and tauri.conf.json, and CHANGELOG.md must describe it.
   validate:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      base_version: ${{ steps.metadata.outputs.base_version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+      release_name: ${{ steps.metadata.outputs.release_name }}
+      release_notes: ${{ steps.metadata.outputs.release_notes }}
     steps:
       - uses: actions/checkout@v6
 
@@ -23,8 +42,9 @@ jobs:
           cache: false
           install: false
 
-      - name: Verify tag and project versions
-        run: pnpm verify:release -- "${{ github.ref_name }}"
+      - name: Resolve the release metadata
+        id: metadata
+        run: pnpm verify:release -- "${{ inputs.version || github.ref_name }}" "${{ inputs.prerelease || 'false' }}"
 
   release:
     needs: validate
@@ -65,6 +85,14 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # A prerelease such as 0.2.1-alpha.1 keeps its base version in the
+      # project files, so the built application takes the full version from
+      # this generated config instead.
+      - name: Configure the release version
+        env:
+          RELEASE_CONFIG_PATH: src-tauri/tauri.release.conf.json
+        run: pnpm verify:release -- "${{ needs.validate.outputs.version }}" "${{ needs.validate.outputs.prerelease }}"
+
       - name: Fetch FFmpeg for bundling
         run: pnpm fetch-ffmpeg
 
@@ -89,7 +117,7 @@ jobs:
           fi
 
       - name: Build the release binary before publishing
-        run: pnpm tauri build --no-bundle ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json ${{ steps.updater.outputs.config }}
+        run: pnpm tauri build --no-bundle ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json --config src-tauri/tauri.release.conf.json ${{ steps.updater.outputs.config }}
 
       - name: Verify the release application starts
         run: pnpm smoke:startup -- "${{ matrix.executable }}"
@@ -100,11 +128,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Quick Media Organizer ${{ github.ref_name }}"
+          tagName: ${{ needs.validate.outputs.tag }}
+          releaseName: ${{ needs.validate.outputs.release_name }}
           releaseDraft: true
+          prerelease: ${{ needs.validate.outputs.prerelease }}
           releaseBody: |
             Keyboard-first desktop app to rename, sort, trim and clean up phone photo & video backups.
+
+            ${{ needs.validate.outputs.release_notes }}
 
             ## Which download?
 
@@ -138,7 +169,7 @@ jobs:
             invoked as a subprocess; the app itself is MIT. See
             FFMPEG-LICENSE.txt next to the installed app.
           uploadUpdaterJson: ${{ steps.updater.outputs.enabled }}
-          args: ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json ${{ steps.updater.outputs.config }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.bundled-ffmpeg.conf.json --config src-tauri/tauri.release.conf.json ${{ steps.updater.outputs.config }}
 
       # The Rust binary is already built, so this only repeats the bundling
       # step, without the FFmpeg payload.
@@ -146,12 +177,14 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build ${{ matrix.args }} ${{ steps.updater.outputs.config }}
+        run: pnpm tauri build ${{ matrix.args }} --config src-tauri/tauri.release.conf.json ${{ steps.updater.outputs.config }}
 
       - name: Upload the lite installer
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
         run: |
           set -euo pipefail
           bundle_dir="src-tauri/target/release/bundle"
@@ -173,23 +206,26 @@ jobs:
             exit 1
           fi
 
-          gh release upload "${{ github.ref_name }}" "${uploads[@]}" --clobber
+          gh release upload "$RELEASE_TAG" "${uploads[@]}" --clobber
 
   publish:
-    needs: release
+    needs: [validate, release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
     steps:
       - name: Verify every installer before publishing
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          assets="$(gh release view "${{ github.ref_name }}" --json assets --jq '.assets[].name')"
+          assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
 
           require_standard() {
             local extension="$1"
@@ -217,7 +253,7 @@ jobs:
           if [ -n "$TAURI_SIGNING_PUBLIC_KEY" ] && [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             work_dir="${RUNNER_TEMP}/qmo-release-assets"
             mkdir -p "$work_dir"
-            gh release download "${{ github.ref_name }}" --pattern latest.json --dir "$work_dir"
+            gh release download "$RELEASE_TAG" --pattern latest.json --dir "$work_dir"
             jq -e \
               '.platforms["windows-x86_64"] and .platforms["darwin-aarch64"]' \
               "$work_dir/latest.json" >/dev/null
@@ -226,7 +262,16 @@ jobs:
             exit 1
           fi
 
+      # A prerelease must never become the "latest" release: the updater
+      # endpoint reads latest.json from there.
       - name: Publish the verified release
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ github.ref_name }}" --draft=false --latest
+          RELEASE_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --latest
+          fi

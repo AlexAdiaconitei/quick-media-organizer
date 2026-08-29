@@ -31,3 +31,6 @@ src-tauri/tauri.updater.conf.json
 .tauri/
 *.key
 *.key.pub
+
+# Written by scripts/verify-release-version.mjs during a release build
+src-tauri/tauri.release.conf.json

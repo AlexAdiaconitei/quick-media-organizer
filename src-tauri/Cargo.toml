@@ -1,6 +1,6 @@
 [package]
 name = "quick-media-organizer"
-version = "0.1.5"
+version = "0.2.0"
 description = "Organize photo and video folders quickly with keyboard shortcuts"
 authors = ["Ferran Vidal Bellés"]
 edition = "2021"

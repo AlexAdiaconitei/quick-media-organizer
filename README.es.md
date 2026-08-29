@@ -187,11 +187,37 @@ Consulta la [documentación de secrets de
 GitHub](https://docs.github.com/es/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
 si no aparece esa sección. Necesitas permisos de escritura sobre el repositorio.
 
-Después publica un tag. El workflow firma los artefactos, genera `latest.json`
-y comprueba que contiene Windows y macOS antes de hacer pública la release. Una
-release sin las dos claves de firma también se publica, pero no incluye el
-actualizador. Definir solo una de las dos claves hace que el workflow falle para
-evitar una release mal configurada.
+El workflow firma los artefactos, genera `latest.json` y comprueba que contiene
+Windows y macOS antes de hacer pública la release. Una release sin las dos
+claves de firma también se publica, pero no incluye el actualizador. Definir
+solo una de las dos claves hace que el workflow falle para evitar una release
+mal configurada.
+
+#### Publicar una release
+
+1. Pon la misma versión en `package.json`, `src-tauri/Cargo.toml` y
+   `src-tauri/tauri.conf.json`, y ejecuta `cargo check` dentro de `src-tauri`
+   para que `Cargo.lock` la siga.
+2. Mueve las entradas de `Unreleased` en `CHANGELOG.md` a una sección
+   `## [x.y.z] - AAAA-MM-DD`. Las notas de la release salen de esa sección, así
+   que si falta o está vacía la release se detiene.
+3. Comprueba las dos cosas en local:
+
+   ```bash
+   pnpm verify:release -- 0.2.0
+   ```
+
+4. Publícala de cualquiera de las dos formas:
+   - **Con tag:** empuja `v0.2.0`.
+   - **A mano:** lanza el workflow **Release** desde la pestaña Actions, indica
+     la versión y marca **Publish as a prerelease** si hace falta. El workflow
+     crea el tag por ti.
+
+Una versión de prelanzamiento como `0.2.1-alpha.1` mantiene la versión base
+(`0.2.1`) en los archivos del proyecto y reutiliza esa sección del CHANGELOG; la
+aplicación compilada sigue indicando la versión completa. Los prelanzamientos
+nunca pasan a ser la release «latest», así que no llegan a quienes usan el
+actualizador integrado.
 
 #### Probar una compilación firmada en local
 

@@ -1,32 +1,106 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { verifyReleaseVersion } from "./verify-release-version.mjs";
+import {
+  changelogNotes,
+  normalizeReleaseVersion,
+  releaseMetadata,
+} from "./verify-release-version.mjs";
 
 const matchingVersions = {
-  packageJson: "0.1.5",
-  cargoToml: "0.1.5",
-  tauriConfig: "0.1.5",
+  packageJson: "1.1.1",
+  cargoToml: "1.1.1",
+  tauriConfig: "1.1.1",
 };
 
-test("a release tag must match every project version", () => {
-  assert.equal(verifyReleaseVersion("v0.1.5", matchingVersions), "0.1.5");
+const changelog = `# Changelog
+
+## [Unreleased]
+
+- Work in progress.
+
+## [1.1.1] - 2026-08-29
+
+### Added
+
+- Manual releases.
+
+### Fixed
+
+- Installer startup.
+
+## [1.1.0] - 2026-08-20
+
+- Older change.
+`;
+
+test("a stable release uses its matching changelog section", () => {
+  const metadata = releaseMetadata("v1.1.1", matchingVersions, changelog);
+
+  assert.equal(metadata.version, "1.1.1");
+  assert.equal(metadata.baseVersion, "1.1.1");
+  assert.equal(metadata.tag, "v1.1.1");
+  assert.equal(metadata.prerelease, false);
+  assert.match(metadata.releaseNotes, /Manual releases/);
+  assert.doesNotMatch(metadata.releaseNotes, /Older change/);
 });
 
-test("a mismatched tag is rejected", () => {
+test("an alpha release includes the stable base version notes", () => {
+  const metadata = releaseMetadata(
+    "1.1.1-alpha.2",
+    matchingVersions,
+    changelog,
+    false,
+  );
+
+  assert.equal(metadata.version, "1.1.1-alpha.2");
+  assert.equal(metadata.baseVersion, "1.1.1");
+  assert.equal(metadata.tag, "v1.1.1-alpha.2");
+  assert.equal(metadata.prerelease, true);
+  assert.match(metadata.releaseNotes, /^## Changes in 1\.1\.1/m);
+  assert.match(metadata.releaseNotes, /Installer startup/);
+});
+
+test("the manual flag can mark a stable version as a prerelease", () => {
+  const metadata = releaseMetadata(
+    "1.1.1",
+    matchingVersions,
+    changelog,
+    "true",
+  );
+
+  assert.equal(metadata.prerelease, true);
+});
+
+test("invalid semantic versions are rejected", () => {
+  for (const version of ["alpha", "1.1", "1.1.1-01", "1.1.1 alpha"]) {
+    assert.throws(() => normalizeReleaseVersion(version), /Invalid release version/);
+  }
+});
+
+test("a release must match every project version", () => {
   assert.throws(
-    () => verifyReleaseVersion("v0.1.6", matchingVersions),
-    /does not match project version/,
+    () => releaseMetadata("1.1.2", matchingVersions, changelog),
+    /requires project version 1\.1\.2/,
+  );
+  assert.throws(
+    () =>
+      releaseMetadata(
+        "1.1.1",
+        { ...matchingVersions, cargoToml: "1.1.0" },
+        changelog,
+      ),
+    /Project versions do not match/,
   );
 });
 
-test("mismatched project files are rejected", () => {
+test("a release without changelog notes is rejected", () => {
   assert.throws(
-    () =>
-      verifyReleaseVersion("v0.1.5", {
-        ...matchingVersions,
-        cargoToml: "0.1.4",
-      }),
-    /Project versions do not match/,
+    () => releaseMetadata("1.1.1", matchingVersions, "# Changelog\n"),
+    /has no section for 1\.1\.1/,
+  );
+  assert.throws(
+    () => changelogNotes("# Changelog\n\n## [1.1.1]\n", "1.1.1"),
+    /section for 1\.1\.1 is empty/,
   );
 });

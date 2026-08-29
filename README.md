@@ -187,11 +187,36 @@ See [GitHub's documentation on repository
 secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
 if that section is not visible. You need write access to the repository.
 
-Then push a tag. The workflow signs the update artifacts, generates
-`latest.json`, and checks that it contains Windows and macOS before publishing
-the release. A release without both signing keys still publishes, but does not
-include the updater. Defining only one of the two keys makes the workflow fail
-instead of publishing a misconfigured release.
+The workflow signs the update artifacts, generates `latest.json`, and checks
+that it contains Windows and macOS before publishing the release. A release
+without both signing keys still publishes, but does not include the updater.
+Defining only one of the two keys makes the workflow fail instead of publishing
+a misconfigured release.
+
+#### Publish a release
+
+1. Set the same version in `package.json`, `src-tauri/Cargo.toml` and
+   `src-tauri/tauri.conf.json`, then run `cargo check` inside `src-tauri` so
+   `Cargo.lock` follows.
+2. Move the entries from `Unreleased` in `CHANGELOG.md` into a
+   `## [x.y.z] - YYYY-MM-DD` section. The release notes come from that section,
+   so a missing or empty one stops the release.
+3. Check both locally:
+
+   ```bash
+   pnpm verify:release -- 0.2.0
+   ```
+
+4. Publish it either way:
+   - **Tag:** push `v0.2.0`.
+   - **Manually:** run the **Release** workflow from the Actions tab, give it
+     the version, and tick **Publish as a prerelease** if needed. The workflow
+     creates the tag itself.
+
+A prerelease version such as `0.2.1-alpha.1` keeps the base version
+(`0.2.1`) in the project files and reuses that CHANGELOG section; the built
+application still reports the full version. Prereleases never become the
+"latest" release, so they do not reach users of the in-app updater.
 
 #### Test a signed build locally
 
