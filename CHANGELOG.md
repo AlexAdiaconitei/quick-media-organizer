@@ -34,3 +34,7 @@ entries out of `Unreleased` and into a `## [x.y.z]` section.
 - Fixed FFmpeg discovery outside the process `PATH` and suppressed console
   windows on Windows.
 - Fixed application startup when updater signing keys are not configured.
+- Fixed the batch folder picker pulling in subfolders by default.
+- Fixed arrow-key navigation being swallowed by the focused rename field.
+- Fixed the progress counter not decreasing when navigating backwards.
+- Moved toasts clear of the toolbar buttons and made every toast dismissible.

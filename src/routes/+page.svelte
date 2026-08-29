@@ -135,12 +135,10 @@
       return { current: 0, total: 0, percent: 0 };
     }
 
-    const actions =
-      appState.stats.renamed +
-      appState.stats.trashed +
-      appState.stats.moved +
-      appState.stats.skipped;
-    const current = Math.min(actions + 1, total);
+    // Position, not a running action tally: trashed/moved items leave the
+    // queue, so they offset the index. Going back has to make it decrease.
+    const removed = appState.stats.trashed + appState.stats.moved;
+    const current = Math.min(appState.current_index + removed + 1, total);
 
     return {
       current,
@@ -784,6 +782,22 @@
     }
 
     if (inRenameInput) {
+      // The rename field takes focus on every new item, so the arrows would
+      // otherwise be swallowed until the user clicked elsewhere. With nothing
+      // typed there is no caret to move, so navigation wins.
+      if (
+        (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+        !renameValue &&
+        hasWorkspace &&
+        !actionInFlight &&
+        !batchJobRunning
+      ) {
+        event.preventDefault();
+        const back = event.key === "ArrowLeft";
+        flashKey(back ? "ArrowLeft" : "ArrowRight");
+        void skip(back ? -1 : 1);
+        return;
+      }
       if (event.key === "Enter") {
         event.preventDefault();
         flashKey("Enter");

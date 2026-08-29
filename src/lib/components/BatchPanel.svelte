@@ -101,7 +101,7 @@
   let estimating = $state(false);
   let estimate = $state<BatchEstimate | null>(null);
   let estimateFor = $state("");
-  let recursiveScan = $state(true);
+  let recursiveScan = $state(false);
   let showReplaceConfirm = $state(false);
   let showBackgroundCloseConfirm = $state(false);
   let initializationPromise: Promise<void> | null = null;

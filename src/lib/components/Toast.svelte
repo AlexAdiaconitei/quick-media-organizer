@@ -13,7 +13,7 @@
 {#if message}
   <div class="toast" class:error role="alert" aria-live="assertive">
     <span>{message}</span>
-    {#if error && onDismiss}
+    {#if onDismiss}
       <button type="button" class="toast-dismiss" onclick={onDismiss} aria-label="Dismiss">×</button>
     {/if}
   </div>

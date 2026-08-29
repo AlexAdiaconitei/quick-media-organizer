@@ -647,8 +647,10 @@ button:disabled {
 
 .toast {
   position: fixed;
-  top: 1rem;
-  right: 1rem;
+  /* Clears the header: top-right sat on top of the toolbar buttons. */
+  top: calc(var(--header-h) + 0.75rem);
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 100;
   display: flex;
   align-items: center;
@@ -659,7 +661,19 @@ button:disabled {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
-  animation: slideIn 180ms ease;
+  animation: toastIn 180ms ease;
+}
+
+/* Keeps the -50% centering that plain slideIn would wipe out. */
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 .toast.error {
