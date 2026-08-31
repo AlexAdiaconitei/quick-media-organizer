@@ -14,8 +14,10 @@ Implementado: `src-tauri/src/batch/` (`mod.rs`, `ffmpeg_args.rs`, `runner.rs`,
 
 Añadido sobre el plan, tras revisar el flujo real "carpeta entera → carpeta nueva":
 
-- `scan_folder_media(path, recursive, exclude_dirs)`: coge una carpeta sin
-  abrirla como álbum (no escribe `session.json` dentro).
+- `scan_folder_media(path, recursive, exclude_dirs, exclude_dir_names)`: coge
+  una carpeta sin abrirla como álbum (no escribe `session.json` dentro).
+  `exclude_dir_names` salta subcarpetas por nombre a cualquier profundidad, que
+  es la única forma de excluir la subcarpeta de salida (`_optimized`).
 - Los archivos que ya están dentro de la carpeta de salida se saltan, para no
   recomprimir el resultado de una pasada anterior.
 - Reintento automático con AAC cuando `-c:a copy` falla (audio PCM de `.avi`,

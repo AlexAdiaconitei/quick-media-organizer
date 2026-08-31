@@ -118,15 +118,15 @@
       { value: "auto", label: t(locale, "batch.settings.hardwareAuto") },
       { value: "software", label: backendLabel("software") },
     ];
+    // Every detected backend is listed, unusable ones included: hiding them
+    // made a machine with a GPU look like the feature was never built, with no
+    // way to reach the reason. Picking one surfaces it in the hint below.
     for (const capability of capabilities.video_backends) {
       const usable = capability.available && capability.codecs.includes(settings.video.codec);
-      const selected = settings.video.hardware_acceleration === capability.backend;
-      if (usable || selected) {
-        options.push({
-          value: capability.backend,
-          label: `${backendLabel(capability.backend)}${usable ? "" : ` — ${t(locale, "batch.settings.hardwareUnavailable")}`}`,
-        });
-      }
+      options.push({
+        value: capability.backend,
+        label: `${backendLabel(capability.backend)}${usable ? "" : ` — ${t(locale, "batch.settings.hardwareUnavailable")}`}`,
+      });
     }
     const preference = settings.video.hardware_acceleration;
     if (
@@ -140,6 +140,21 @@
       });
     }
     return options;
+  });
+
+  /// Why "Automatic" ended up on the CPU even though the machine reports GPUs:
+  /// without this the hint claimed a hardware run that never happens.
+  const autoFallbackReason = $derived.by((): string | null => {
+    if (settings.video.hardware_acceleration !== "auto") return null;
+    if (resolvedBackend !== "software") return null;
+    const detailed = capabilities.video_backends
+      .filter(
+        (capability) =>
+          !capability.available || !capability.codecs.includes(settings.video.codec),
+      )
+      .map((capability) => `${backendLabel(capability.backend)}: ${capability.reason ?? t(locale, "batch.settings.hardwareUnavailableHint")}`);
+    if (detailed.length === 0) return null;
+    return `${t(locale, "batch.settings.hardwareNoneAvailable")} ${detailed.join(" · ")}`;
   });
 
   const speedOptions = $derived([
@@ -312,6 +327,8 @@
           <small class="option-hint">
             {#if selectedBackendUnavailable}
               {selectedBackendCapability?.reason ?? t(locale, "batch.settings.hardwareUnavailableHint")}
+            {:else if autoFallbackReason}
+              {autoFallbackReason}
             {:else}
               {format(locale, "batch.settings.hardwareResolved", { backend: backendLabel(resolvedBackend) })}
             {/if}

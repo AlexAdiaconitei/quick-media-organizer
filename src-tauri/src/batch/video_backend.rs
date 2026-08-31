@@ -85,7 +85,7 @@ fn detect_video_backends_for(
                 let attempt = probe_attempt(backend, codec);
                 match probe(&attempt) {
                     Ok(()) => codecs.push(codec),
-                    Err(error) => failures.push(format!("{codec:?}: {}", first_line(&error))),
+                    Err(error) => failures.push((codec, probe_reason(&error))),
                 }
             }
 
@@ -93,7 +93,7 @@ fn detect_video_backends_for(
             let reason = if available {
                 None
             } else if compiled_any {
-                Some(failures.join("; "))
+                Some(describe_failures(&failures))
             } else {
                 Some("Encoder not included in this FFmpeg build.".into())
             };
@@ -572,8 +572,44 @@ fn contains_any(text: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| text.contains(needle))
 }
 
-fn first_line(text: &str) -> &str {
-    text.lines().next().unwrap_or(text).trim()
+/// One driver problem usually fails every codec with the same message, so the
+/// codec prefix is only worth printing when the failures actually differ.
+fn describe_failures(failures: &[(VideoCodec, String)]) -> String {
+    let distinct: HashSet<&str> = failures.iter().map(|(_, why)| why.as_str()).collect();
+    if distinct.len() == 1 {
+        return failures[0].1.clone();
+    }
+    failures
+        .iter()
+        .map(|(codec, why)| format!("{}: {why}", codec_label(*codec)))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// The first meaningful line of an ffmpeg probe failure, without the
+/// `[h264_nvenc @ 000001f3c01124c0] ` prefix: the reason is shown to the user
+/// in the encoder dropdown, and a raw pointer address is only noise there.
+fn probe_reason(text: &str) -> String {
+    let line = text
+        .lines()
+        .map(strip_ffmpeg_tag)
+        .find(|line| !line.is_empty())
+        .unwrap_or_else(|| text.trim());
+    line.to_string()
+}
+
+fn strip_ffmpeg_tag(line: &str) -> &str {
+    let mut rest = line.trim();
+    // Nested tags happen: "[vost#0:0/h264_nvenc @ 0x..] [enc:h264_nvenc @ 0x..] ".
+    while rest.starts_with('[') {
+        let Some(end) = rest.find(']') else { break };
+        let tag = &rest[1..end];
+        if !tag.contains(" @ ") {
+            break;
+        }
+        rest = rest[end + 1..].trim_start();
+    }
+    rest
 }
 
 #[cfg(test)]
@@ -669,6 +705,67 @@ mod tests {
             .unwrap();
         assert_eq!(nvidia.codecs, vec![VideoCodec::H264]);
         assert!(nvidia.available);
+    }
+
+    #[test]
+    fn differing_codec_failures_keep_their_codec_prefix() {
+        let encoders = " V....D h264_nvenc N\n V....D hevc_nvenc N\n";
+        let caps = detect_video_backends_for(&[VideoBackend::Nvidia], encoders, &|attempt| {
+            if attempt.output_flags.iter().any(|flag| flag == "h264_nvenc") {
+                Err("[h264_nvenc @ 0x1] No capable devices found".into())
+            } else {
+                Err("[hevc_nvenc @ 0x1] Codec not supported".into())
+            }
+        });
+        assert_eq!(
+            caps[0].reason.as_deref(),
+            Some("H.264: No capable devices found; H.265: Codec not supported")
+        );
+    }
+
+    #[test]
+    fn an_unusable_backend_reports_why_without_ffmpeg_noise() {
+        let encoders = " V....D h264_nvenc NVIDIA\n";
+        let caps = detect_video_backends_for(&[VideoBackend::Nvidia], encoders, &|_| {
+            Err(concat!(
+                "[h264_nvenc @ 000001f3c01124c0] Driver does not support the required ",
+                "nvenc API version. Required: 13.1 Found: 12.2\n",
+                "[h264_nvenc @ 000001f3c01124c0] The minimum required Nvidia driver is 610.00"
+            )
+            .into())
+        });
+        let nvidia = &caps[0];
+        assert!(!nvidia.available);
+        assert_eq!(
+            nvidia.reason.as_deref(),
+            Some(concat!(
+                "Driver does not support the required nvenc API version. ",
+                "Required: 13.1 Found: 12.2"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_backend_missing_from_the_build_says_so() {
+        let caps = detect_video_backends_for(&[VideoBackend::Nvidia], "", &|_| Ok(()));
+        assert!(!caps[0].available);
+        assert_eq!(
+            caps[0].reason.as_deref(),
+            Some("Encoder not included in this FFmpeg build.")
+        );
+    }
+
+    #[test]
+    fn nested_ffmpeg_tags_are_stripped() {
+        assert_eq!(
+            strip_ffmpeg_tag("[vost#0:0/h264_amf @ 0x1] [enc:h264_amf @ 0x2] Failed to create"),
+            "Failed to create"
+        );
+        // A bracketed word without an address is real message text, not a tag.
+        assert_eq!(
+            strip_ffmpeg_tag("[warning] disk full"),
+            "[warning] disk full"
+        );
     }
 
     #[test]

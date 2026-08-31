@@ -177,6 +177,49 @@ export function selectedPaths(items: MediaItem[], selected: Set<string>): string
     .flatMap((item) => item.paths);
 }
 
+/// Whether a scanned folder owns this item, so toggling "Include subfolders"
+/// can replace exactly the items that came from a folder scan and leave files
+/// added one by one (or inherited from the open queue) alone.
+export function itemIsInsideFolder(item: MediaItem, folder: string): boolean {
+  const root = normalizePath(folder).replace(/\/+$/, "");
+  if (!root) return false;
+  return item.paths.some((path) => {
+    const file = normalizePath(path);
+    return file.startsWith(`${root}/`);
+  });
+}
+
+/// Windows paths mix separators and cases; comparing them raw made the same
+/// folder look like two different roots.
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").toLowerCase();
+}
+
+/// Rebuilds the list after "Include subfolders" flipped. Items outside every
+/// scanned folder are kept as-is with their selection; items the fresh scan
+/// returned start selected, which is what makes the counter move when the
+/// toggle adds subfolder files.
+export function applyRescan(
+  current: MediaItem[],
+  scannedFolders: string[],
+  rescanned: MediaItem[],
+  selected: Set<string>,
+): { items: MediaItem[]; selected: Set<string> } {
+  const kept = current.filter(
+    (item) => !scannedFolders.some((folder) => itemIsInsideFolder(item, folder)),
+  );
+  const keptIds = new Set(kept.map((item) => item.id));
+  const items = dedupeItems([...kept, ...rescanned]);
+  return {
+    items,
+    selected: new Set(
+      items
+        .filter((item) => (keptIds.has(item.id) ? selected.has(item.id) : true))
+        .map((item) => item.id),
+    ),
+  };
+}
+
 export function dedupeItems(items: MediaItem[]): MediaItem[] {
   const seen = new Set<string>();
   return items.filter((item) => {
@@ -204,11 +247,13 @@ export async function scanFolder(
   path: string,
   recursive: boolean,
   excludeDirs: string[],
+  excludeDirNames: string[] = [],
 ): Promise<MediaItem[]> {
   return invokeLogged<MediaItem[]>("scan_folder_media", {
     path,
     recursive,
     excludeDirs,
+    excludeDirNames,
   });
 }
 

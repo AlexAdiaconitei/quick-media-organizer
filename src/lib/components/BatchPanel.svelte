@@ -9,6 +9,7 @@
   import Switch from "./Switch.svelte";
   import {
     activeJob,
+    applyRescan,
     builtInPresets,
     cancelJob,
     dedupeItems,
@@ -45,6 +46,7 @@
     locale,
     open,
     hasQueue,
+    queueFolder = null,
     initialItems = null,
     initialSettings = null,
     autoStart = false,
@@ -59,6 +61,9 @@
     locale: Locale;
     open: boolean;
     hasQueue: boolean;
+    /// The folder the open queue came from, so "Include subfolders" can
+    /// re-scan it instead of only affecting folders added inside the panel.
+    queueFolder?: string | null;
     /// Seeds the panel with one file (the "optimize this file" entry point).
     initialItems?: MediaItem[] | null;
     /// Settings chosen outside the panel, e.g. by the quick picker.
@@ -102,6 +107,10 @@
   let estimate = $state<BatchEstimate | null>(null);
   let estimateFor = $state("");
   let recursiveScan = $state(false);
+  /// Folders added through "Add folder", so flipping "Include subfolders" can
+  /// re-scan them. Without this the toggle only affected the *next* folder and
+  /// looked completely dead on an already populated list.
+  let scannedFolders = $state<string[]>([]);
   let showReplaceConfirm = $state(false);
   let showBackgroundCloseConfirm = $state(false);
   let initializationPromise: Promise<void> | null = null;
@@ -253,6 +262,8 @@
       if (hasQueue && items.length === 0 && !(initialItems && initialItems.length > 0)) {
         items = await loadQueueItems();
         selected = new Set(items.map((item) => item.id));
+        // The queue is a folder scan too, so the toggle has to reach it.
+        if (queueFolder) scannedFolders = [queueFolder];
       }
     } catch (error) {
       onError(String(error));
@@ -310,21 +321,60 @@
     }
   }
 
+  /// The output must never feed itself: whatever the last run produced would
+  /// otherwise be queued and re-encoded. A custom folder is one absolute path;
+  /// the per-file subfolder mode can only be matched by name.
+  function scanExcludes(): { dirs: string[]; names: string[] } {
+    if (settings.output.mode === "custom_folder" && settings.output.path) {
+      return { dirs: [settings.output.path], names: [] };
+    }
+    if (settings.output.mode === "subfolder" && settings.output.name) {
+      return { dirs: [], names: [settings.output.name] };
+    }
+    return { dirs: [], names: [] };
+  }
+
   async function addFolder() {
     busy = true;
     try {
       const folder = await invokeLogged<string | null>("pick_folder");
       if (!folder) return;
-      const exclude =
-        settings.output.mode === "custom_folder" && settings.output.path
-          ? [settings.output.path]
-          : [];
-      const added = await scanFolder(folder, recursiveScan, exclude);
+      const excludes = scanExcludes();
+      const added = await scanFolder(folder, recursiveScan, excludes.dirs, excludes.names);
       if (added.length === 0) {
         onError(t(locale, "batch.select.folderEmpty"));
         return;
       }
+      if (!scannedFolders.includes(folder)) scannedFolders = [...scannedFolders, folder];
       mergeItems(added);
+    } catch (error) {
+      onError(String(error));
+    } finally {
+      busy = false;
+    }
+  }
+
+  /// Re-runs every folder scan with the new recursion setting. Items that were
+  /// not produced by a folder scan (the open queue, individually picked files)
+  /// survive untouched, and so does the current selection for items that the
+  /// re-scan still returns.
+  async function applyRecursiveScan(next: boolean) {
+    recursiveScan = next;
+    if (scannedFolders.length === 0) return;
+
+    busy = true;
+    try {
+      const excludes = scanExcludes();
+      const rescanned: MediaItem[] = [];
+      for (const folder of scannedFolders) {
+        rescanned.push(
+          ...(await scanFolder(folder, next, excludes.dirs, excludes.names)),
+        );
+      }
+
+      const rebuilt = applyRescan(items, scannedFolders, rescanned, selected);
+      items = rebuilt.items;
+      selected = rebuilt.selected;
     } catch (error) {
       onError(String(error));
     } finally {
@@ -534,8 +584,11 @@
               {t(locale, "batch.select.addFiles")}
             </button>
             <Switch
-              bind:checked={recursiveScan}
+              checked={recursiveScan}
+              disabled={busy}
               label={t(locale, "batch.select.includeSubfolders")}
+              hint={t(locale, "batch.select.includeSubfoldersHint")}
+              onchange={(next) => void applyRecursiveScan(next)}
             />
           </div>
           <BatchSelectGrid {locale} {items} bind:selected {busy} {demoMode} />

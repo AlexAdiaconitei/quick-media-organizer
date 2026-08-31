@@ -4,12 +4,22 @@
     label,
     hint = "",
     disabled = false,
+    onchange,
   }: {
     checked?: boolean;
     label: string;
     hint?: string;
     disabled?: boolean;
+    /// For switches whose flip has to run work (a re-scan, a save). Callers
+    /// that only need the value keep using `bind:checked`.
+    onchange?: (checked: boolean) => void;
   } = $props();
+
+  function toggle() {
+    const next = !checked;
+    checked = next;
+    onchange?.(next);
+  }
 
   const labelId = $props.id();
 </script>
@@ -29,7 +39,7 @@
     aria-checked={checked}
     aria-labelledby={labelId}
     {disabled}
-    onclick={() => (checked = !checked)}
+    onclick={toggle}
   >
     <span class="switch-knob"></span>
   </button>

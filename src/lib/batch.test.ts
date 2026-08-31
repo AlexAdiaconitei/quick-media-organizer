@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyRescan,
   formatFailureReport,
+  itemIsInsideFolder,
   metadataFate,
   sanitizeStoredSettings,
   shouldFinalizeRecoveredJob,
 } from "./batch";
-import type { BatchItemStatus, BatchJobStatus } from "./types";
+import type { BatchItemStatus, BatchJobStatus, MediaItem } from "./types";
 
 /// Mirrors `can_carry_exif` in `src-tauri/src/metadata.rs`. If that list moves,
 /// this is the test that should fail rather than the checkbox quietly lying.
@@ -65,5 +67,61 @@ describe("saved batch settings", () => {
     } as never;
 
     expect(sanitizeStoredSettings(oldSettings).video.hardware_acceleration).toBe("auto");
+  });
+});
+
+describe("folder ownership", () => {
+  const item = (path: string) => ({ id: path, paths: [path] }) as MediaItem;
+
+  it("matches regardless of separator and case", () => {
+    expect(itemIsInsideFolder(item("D:\\camera\\trip\\a.jpg"), "d:/CAMERA")).toBe(true);
+    expect(itemIsInsideFolder(item("D:/camera/a.jpg"), "D:\\camera\\")).toBe(true);
+  });
+
+  it("does not match a sibling folder with a shared prefix", () => {
+    expect(itemIsInsideFolder(item("D:\\camera2\\a.jpg"), "D:\\camera")).toBe(false);
+  });
+
+  it("matches a Live Photo through either of its paths", () => {
+    const pair = {
+      id: "pair",
+      paths: ["D:\\other\\a.heic", "D:\\camera\\a.mov"],
+    } as MediaItem;
+    expect(itemIsInsideFolder(pair, "D:\\camera")).toBe(true);
+  });
+});
+
+describe("applyRescan", () => {
+  const item = (path: string) => ({ id: path, paths: [path] }) as MediaItem;
+  const root = "D:\\camera";
+
+  it("adds subfolder files and selects them", () => {
+    const current = [item("D:\\camera\\a.jpg")];
+    const rescanned = [item("D:\\camera\\a.jpg"), item("D:\\camera\\trip\\b.jpg")];
+
+    const result = applyRescan(current, [root], rescanned, new Set(["D:\\camera\\a.jpg"]));
+
+    expect(result.items).toHaveLength(2);
+    expect(result.selected.size).toBe(2);
+  });
+
+  it("drops subfolder files again when recursion is turned off", () => {
+    const current = [item("D:\\camera\\a.jpg"), item("D:\\camera\\trip\\b.jpg")];
+    const rescanned = [item("D:\\camera\\a.jpg")];
+
+    const result = applyRescan(current, [root], rescanned, new Set(current.map((i) => i.id)));
+
+    expect(result.items.map((i) => i.id)).toEqual(["D:\\camera\\a.jpg"]);
+  });
+
+  it("keeps files added outside the scanned folders, deselected ones included", () => {
+    const outside = item("D:\\downloads\\c.jpg");
+    const current = [outside, item("D:\\camera\\a.jpg")];
+    const rescanned = [item("D:\\camera\\a.jpg")];
+
+    const result = applyRescan(current, [root], rescanned, new Set(["D:\\camera\\a.jpg"]));
+
+    expect(result.items.map((i) => i.id)).toContain(outside.id);
+    expect(result.selected.has(outside.id)).toBe(false);
   });
 });

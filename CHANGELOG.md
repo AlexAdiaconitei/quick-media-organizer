@@ -35,6 +35,14 @@ entries out of `Unreleased` and into a `## [x.y.z]` section.
   windows on Windows.
 - Fixed application startup when updater signing keys are not configured.
 - Fixed the batch folder picker pulling in subfolders by default.
+- "Include subfolders" in batch optimization now re-scans the folders already
+  loaded, so the item count changes when the switch is flipped. It previously
+  only affected the next folder added, which made it look inert.
+- Recursive batch scans no longer queue the output subfolder, so files produced
+  by an earlier run are not optimized again.
+- The video encoder dropdown now lists hardware encoders that were detected but
+  cannot be used, together with the reason, instead of hiding them. A machine
+  with a GPU no longer looks like it only has a CPU encoder.
 - Fixed arrow-key navigation being swallowed by the focused rename field.
 - Fixed the progress counter not decreasing when navigating backwards.
 - Moved toasts clear of the toolbar buttons and made every toast dismissible.

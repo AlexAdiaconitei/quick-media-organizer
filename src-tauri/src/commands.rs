@@ -880,6 +880,7 @@ pub fn scan_folder_media(
     path: String,
     recursive: bool,
     exclude_dirs: Vec<String>,
+    exclude_dir_names: Vec<String>,
 ) -> Result<Vec<MediaItem>, String> {
     wrap(
         &log,
@@ -895,20 +896,47 @@ pub fn scan_folder_media(
                 .filter(|dir| !dir.trim().is_empty())
                 .map(PathBuf::from)
                 .collect();
+            // Output subfolders live *under* the scanned root, one per source
+            // folder, so they can only be excluded by name: a recursive scan
+            // would otherwise queue everything the last run just produced.
+            let excluded_names: Vec<String> = exclude_dir_names
+                .iter()
+                .map(|name| name.trim().to_lowercase())
+                .filter(|name| !name.is_empty())
+                .collect();
 
             let items = crate::media::scan_folder(&root, recursive)?;
             Ok(items
                 .into_iter()
                 .filter(|item| {
                     !item.paths.iter().any(|file| {
+                        let file = Path::new(file);
                         excluded
                             .iter()
-                            .any(|dir| crate::path_util::is_path_inside_root(dir, Path::new(file)))
+                            .any(|dir| crate::path_util::is_path_inside_root(dir, file))
+                            || is_under_named_dir(&root, file, &excluded_names)
                     })
                 })
                 .collect())
         })(),
     )
+}
+
+/// True when any folder between `root` and `file` carries an excluded name.
+/// Only the part below the root is inspected: a user whose album happens to
+/// sit in `D:/_optimized` still gets their files.
+fn is_under_named_dir(root: &Path, file: &Path, names: &[String]) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    let Ok(relative) = file.strip_prefix(root) else {
+        return false;
+    };
+    let mut components: Vec<_> = relative.components().collect();
+    components.pop(); // The file name itself is not a folder.
+    components
+        .iter()
+        .any(|component| names.contains(&component.as_os_str().to_string_lossy().to_lowercase()))
 }
 
 /// The job currently registered, if any. Lets the panel re-attach to a run
@@ -978,8 +1006,12 @@ pub fn get_update_context(app: AppHandle) -> Result<UpdateContext, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_heic, releases_url_from_endpoint, requests_unavailable_avif_metadata};
+    use super::{
+        contains_heic, is_under_named_dir, releases_url_from_endpoint,
+        requests_unavailable_avif_metadata,
+    };
     use crate::batch::{BatchSettings, ImageFormat};
+    use std::path::Path;
 
     #[test]
     fn detects_heic_inputs_case_insensitively() {
@@ -1022,6 +1054,42 @@ mod tests {
             releases_url_from_endpoint("https://example.com/feed.json"),
             None
         );
+    }
+
+    #[test]
+    fn an_output_subfolder_is_excluded_at_any_depth() {
+        let root = Path::new("D:/camera");
+        let names = vec!["_optimized".to_string()];
+
+        assert!(is_under_named_dir(
+            root,
+            Path::new("D:/camera/_optimized/a.jpg"),
+            &names
+        ));
+        // Case does not match on Windows, and depth must not matter.
+        assert!(is_under_named_dir(
+            root,
+            Path::new("D:/camera/trip/_Optimized/a.jpg"),
+            &names
+        ));
+        assert!(!is_under_named_dir(
+            root,
+            Path::new("D:/camera/trip/a.jpg"),
+            &names
+        ));
+        // A file *named* like the folder is still a file to convert.
+        assert!(!is_under_named_dir(
+            root,
+            Path::new("D:/camera/_optimized.jpg"),
+            &names
+        ));
+        // The root itself is never inspected: an album can live anywhere.
+        assert!(!is_under_named_dir(
+            Path::new("D:/_optimized"),
+            Path::new("D:/_optimized/a.jpg"),
+            &names
+        ));
+        assert!(!is_under_named_dir(root, Path::new("D:/camera/a.jpg"), &[]));
     }
 
     #[test]

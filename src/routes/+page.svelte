@@ -1157,6 +1157,7 @@
   {locale}
   open={showBatch}
   hasQueue={batchQueueAvailable}
+  queueFolder={appState.folder_path ?? null}
   initialItems={batchInitialItems}
   initialSettings={batchInitialItems && !screenshotMode ? quickSettings : null}
   autoStart={batchAutoStart}
