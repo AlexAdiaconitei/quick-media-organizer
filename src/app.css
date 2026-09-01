@@ -1223,6 +1223,56 @@ button:disabled {
   padding-right: 4px;
 }
 
+/* The folder the panel opened on. It leads the select step because the batch
+   normally runs on whatever the editor already has open, and that has to be
+   visible before anything is queued. */
+.batch-source-folder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.batch-source-label {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.batch-source-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  /* A long path must not push the button out of the panel, and the tail is
+     the useful half. `plaintext` keeps the path reading left to right while
+     `rtl` moves the ellipsis to the front. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
+}
+
+.batch-source-path.empty {
+  color: var(--muted);
+  direction: ltr;
+  unicode-bidi: normal;
+  font-style: italic;
+}
+
+.batch-source-extra {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .batch-sources {
   display: flex;
   align-items: center;

@@ -23,6 +23,10 @@ entries out of `Unreleased` and into a `## [x.y.z]` section.
 - Preserved EXIF metadata when converting images.
 - Moved the frontend toolchain to pnpm and made `pnpm dev` start the desktop
   application.
+- Batch optimization now shows the folder it is working on and opens on the one
+  the editor has open, with a "Change folder" button to point it elsewhere. The
+  panel also follows the editor when the open folder changes, which it did not
+  do when the folder was opened after the application started.
 - Added Windows and Linux checks, installer startup smoke tests and guarded
   release publication.
 
@@ -34,6 +38,12 @@ entries out of `Unreleased` and into a `## [x.y.z]` section.
 - Fixed FFmpeg discovery outside the process `PATH` and suppressed console
   windows on Windows.
 - Fixed application startup when updater signing keys are not configured.
+- The first-run welcome screen no longer comes back after it was dismissed for
+  good. Settings are written atomically and read field by field, so an
+  interrupted write or one unreadable value no longer resets every preference,
+  which also cost favourite folders and the saved batch settings. A settings
+  file that cannot be parsed at all is kept as `settings.json.corrupt` instead
+  of being overwritten.
 - Fixed the batch folder picker pulling in subfolders by default.
 - "Include subfolders" in batch optimization now re-scans the folders already
   loaded, so the item count changes when the switch is flipped. It previously

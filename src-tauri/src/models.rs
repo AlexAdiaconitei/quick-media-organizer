@@ -124,12 +124,19 @@ pub struct ActionResult {
     pub state: FrontendState,
 }
 
+/// Every field defaults on its own, and the ones holding structured data are
+/// read leniently. A single value this build cannot understand must never cost
+/// the user the whole file: that is what made the first-run welcome screen
+/// reappear and favourites vanish after an update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[serde(default = "default_locale")]
     pub locale: String,
-    pub first_run_completed: bool,
-    pub favorite_folders: Vec<String>,
     #[serde(default)]
+    pub first_run_completed: bool,
+    #[serde(default, deserialize_with = "lenient")]
+    pub favorite_folders: Vec<String>,
+    #[serde(default, deserialize_with = "lenient")]
     pub layout_mode: LayoutMode,
     #[serde(default = "default_show_metadata")]
     pub show_metadata: bool,
@@ -137,14 +144,30 @@ pub struct AppSettings {
     pub video_with_sound: bool,
     #[serde(default)]
     pub last_folder_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub batch_presets: Vec<crate::batch::BatchPreset>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub last_batch_settings: Option<crate::batch::BatchSettings>,
 }
 
 fn default_show_metadata() -> bool {
     true
+}
+
+fn default_locale() -> String {
+    "en".to_string()
+}
+
+/// Reads a field, or falls back to its default when the stored value no longer
+/// fits the type. Used for the settings that carry nested structures, where a
+/// renamed variant or a dropped field would otherwise abort the whole parse.
+fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(T::deserialize(value).unwrap_or_default())
 }
 
 impl Default for AppSettings {

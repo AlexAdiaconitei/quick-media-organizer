@@ -5,6 +5,7 @@ import {
   formatFailureReport,
   itemIsInsideFolder,
   metadataFate,
+  shouldReseedQueue,
   sanitizeStoredSettings,
   shouldFinalizeRecoveredJob,
 } from "./batch";
@@ -123,5 +124,44 @@ describe("applyRescan", () => {
 
     expect(result.items.map((i) => i.id)).toContain(outside.id);
     expect(result.selected.has(outside.id)).toBe(false);
+  });
+});
+
+describe("shouldReseedQueue", () => {
+  const base = {
+    hasQueue: true,
+    jobRunning: false,
+    hasInitialItems: false,
+    itemCount: 0,
+    seededFolder: null as string | null,
+    queueFolder: "D:/camera" as string | null,
+  };
+
+  it("seeds an empty panel from the folder the editor has open", () => {
+    expect(shouldReseedQueue(base)).toBe(true);
+  });
+
+  it("reseeds when the editor moved to another folder", () => {
+    expect(
+      shouldReseedQueue({ ...base, itemCount: 5, seededFolder: "D:/old" }),
+    ).toBe(true);
+  });
+
+  it("keeps what the user assembled while the editor stayed put", () => {
+    expect(
+      shouldReseedQueue({ ...base, itemCount: 5, seededFolder: "D:/camera" }),
+    ).toBe(false);
+  });
+
+  it("leaves a single handed-in file alone", () => {
+    expect(shouldReseedQueue({ ...base, hasInitialItems: true })).toBe(false);
+  });
+
+  it("never touches the list under a running job", () => {
+    expect(shouldReseedQueue({ ...base, jobRunning: true })).toBe(false);
+  });
+
+  it("does nothing when the editor has no folder open", () => {
+    expect(shouldReseedQueue({ ...base, hasQueue: false })).toBe(false);
   });
 });

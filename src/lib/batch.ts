@@ -195,6 +195,27 @@ function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").toLowerCase();
 }
 
+/// Whether the batch panel should reload its list from the editor's queue.
+/// The panel must follow the folder the editor has open, but must not throw
+/// away folders and files the user added inside it, so a reseed happens only
+/// when there is nothing to lose or the editor has moved elsewhere.
+export function shouldReseedQueue(input: {
+  hasQueue: boolean;
+  jobRunning: boolean;
+  /// A single file handed in by "optimize this file": that file is the source.
+  hasInitialItems: boolean;
+  itemCount: number;
+  /// The folder the current list came from.
+  seededFolder: string | null;
+  /// The folder the editor has open now.
+  queueFolder: string | null;
+}): boolean {
+  if (input.hasInitialItems) return false;
+  if (input.jobRunning || !input.hasQueue) return false;
+  if (input.itemCount === 0) return true;
+  return input.seededFolder !== input.queueFolder;
+}
+
 /// Rebuilds the list after "Include subfolders" flipped. Items outside every
 /// scanned folder are kept as-is with their selection; items the fresh scan
 /// returned start selected, which is what makes the counter move when the

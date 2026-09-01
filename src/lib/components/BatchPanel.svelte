@@ -23,6 +23,7 @@
     pickFiles,
     sanitizeStoredSettings,
     scanFolder,
+    shouldReseedQueue,
     selectedPaths,
     shouldFinalizeRecoveredJob,
     startJob,
@@ -111,6 +112,9 @@
   /// re-scan them. Without this the toggle only affected the *next* folder and
   /// looked completely dead on an already populated list.
   let scannedFolders = $state<string[]>([]);
+  /// Which editor folder the current list came from, so reopening the panel
+  /// after switching folders reseeds instead of showing the old queue.
+  let seededQueueFolder = $state<string | null>(null);
   let showReplaceConfirm = $state(false);
   let showBackgroundCloseConfirm = $state(false);
   let initializationPromise: Promise<void> | null = null;
@@ -211,6 +215,7 @@
     }
 
     await ensureInitialized();
+    await syncQueueSource();
 
     if (initialSettings) {
       settings = sanitizeStoredSettings(structuredClone($state.snapshot(initialSettings)));
@@ -258,13 +263,37 @@
         step = "run";
         if (shouldFinalizeRecoveredJob(running)) await applyDone(running);
       }
+    } catch (error) {
+      onError(String(error));
+    } finally {
+      busy = false;
+    }
+  }
 
-      if (hasQueue && items.length === 0 && !(initialItems && initialItems.length > 0)) {
-        items = await loadQueueItems();
-        selected = new Set(items.map((item) => item.id));
-        // The queue is a folder scan too, so the toggle has to reach it.
-        if (queueFolder) scannedFolders = [queueFolder];
-      }
+  /// Seeds the panel from the folder the editor has open, every time it is
+  /// opened. `initialize()` runs once and is memoized, so it cannot do this:
+  /// a folder opened after the app started would never reach the panel.
+  /// Folders and files the user added in the panel survive reopening, unless
+  /// the editor has moved to a different folder since.
+  async function syncQueueSource() {
+    const reseed = shouldReseedQueue({
+      hasQueue,
+      jobRunning,
+      hasInitialItems: !!initialItems && initialItems.length > 0,
+      itemCount: items.length,
+      seededFolder: seededQueueFolder,
+      queueFolder: queueFolder ?? null,
+    });
+    if (!reseed) return;
+
+    busy = true;
+    try {
+      items = await loadQueueItems();
+      selected = new Set(items.map((item) => item.id));
+      // The queue is a folder scan too, so "Include subfolders" and "Change
+      // folder" both have something to act on.
+      scannedFolders = queueFolder ? [queueFolder] : [];
+      seededQueueFolder = queueFolder ?? null;
     } catch (error) {
       onError(String(error));
     } finally {
@@ -347,6 +376,32 @@
       }
       if (!scannedFolders.includes(folder)) scannedFolders = [...scannedFolders, folder];
       mergeItems(added);
+    } catch (error) {
+      onError(String(error));
+    } finally {
+      busy = false;
+    }
+  }
+
+  /// Replaces the source folder instead of adding to it. The panel opens on
+  /// the folder the editor has open, so the common move is swapping it, not
+  /// stacking a second one: `applyRescan` drops what the previous folders
+  /// contributed and keeps files that were added one by one.
+  async function changeFolder() {
+    busy = true;
+    try {
+      const folder = await invokeLogged<string | null>("pick_folder");
+      if (!folder) return;
+      const excludes = scanExcludes();
+      const scanned = await scanFolder(folder, recursiveScan, excludes.dirs, excludes.names);
+      if (scanned.length === 0) {
+        onError(t(locale, "batch.select.folderEmpty"));
+        return;
+      }
+      const rebuilt = applyRescan(items, scannedFolders, scanned, selected);
+      scannedFolders = [folder];
+      items = rebuilt.items;
+      selected = rebuilt.selected;
     } catch (error) {
       onError(String(error));
     } finally {
@@ -576,6 +631,33 @@
 
       <div class="batch-body">
         {#if step === "select"}
+          <div class="batch-source-folder">
+            <span class="batch-source-label">{t(locale, "batch.select.sourceFolder")}</span>
+            {#if scannedFolders.length > 0}
+              <span class="batch-source-path" title={scannedFolders.join("\n")}>
+                {scannedFolders[0]}
+              </span>
+              {#if scannedFolders.length > 1}
+                <span class="batch-source-extra">
+                  {format(locale, "batch.select.sourceFolderExtra", {
+                    count: scannedFolders.length - 1,
+                  })}
+                </span>
+              {/if}
+            {:else}
+              <span class="batch-source-path empty">
+                {t(locale, "batch.select.sourceFolderNone")}
+              </span>
+            {/if}
+            <button type="button" class="ghost-btn" disabled={busy} onclick={changeFolder}>
+              {t(
+                locale,
+                scannedFolders.length > 0
+                  ? "batch.select.changeFolder"
+                  : "batch.select.chooseFolder",
+              )}
+            </button>
+          </div>
           <div class="batch-sources">
             <button type="button" class="ghost-btn" disabled={busy} onclick={addFolder}>
               {t(locale, "batch.select.addFolder")}
