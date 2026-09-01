@@ -292,7 +292,7 @@ impl FfmpegTools {
         let video_backends = VIDEO_BACKENDS
             .get_or_init(|| {
                 detect_video_backends(&encoders, &|attempt| {
-                    self.probe_video_encoder(attempt, Duration::from_secs(3))
+                    self.probe_video_encoder(attempt, PROBE_TIMEOUT)
                 })
             })
             .clone();
@@ -312,9 +312,31 @@ impl FfmpegTools {
         }
     }
 
+    /// Encodes one real frame to find out whether the device works, not merely
+    /// whether the encoder is compiled in.
+    ///
+    /// Hardware encoders reject frames below a minimum size, and each vendor
+    /// picks its own: NVENC needs at least 145 pixels wide, so the probe runs
+    /// at [`PROBE_SIZE`] and retries at [`PROBE_FALLBACK_SIZE`] when the
+    /// failure is about the frame size. Probing too small reported a working
+    /// GPU as unavailable.
     fn probe_video_encoder(
         &self,
         attempt: &VideoEncodeAttempt,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        match self.probe_video_encoder_at(attempt, PROBE_SIZE, timeout) {
+            Err(error) if is_frame_size_failure(&error) => {
+                self.probe_video_encoder_at(attempt, PROBE_FALLBACK_SIZE, timeout)
+            }
+            result => result,
+        }
+    }
+
+    fn probe_video_encoder_at(
+        &self,
+        attempt: &VideoEncodeAttempt,
+        size: &str,
         timeout: Duration,
     ) -> Result<(), String> {
         let mut command = no_window_command(&self.ffmpeg);
@@ -326,7 +348,7 @@ impl FfmpegTools {
             .arg("-f")
             .arg("lavfi")
             .arg("-i")
-            .arg("color=c=black:s=64x64:r=25:d=0.08")
+            .arg(format!("color=c=black:s={size}:r=25:d=0.08"))
             .args(&attempt.output_flags)
             .arg("-frames:v")
             .arg("1")
@@ -371,6 +393,36 @@ impl FfmpegTools {
         text.push_str(&String::from_utf8_lossy(&output.stderr));
         Some(text)
     }
+}
+
+/// Frame size used to probe a hardware encoder. Every vendor rejects frames
+/// under some minimum: NVENC wants at least 145x49, so a 64x64 probe failed on
+/// working GPUs with "Frame Dimension less than the minimum supported value".
+const PROBE_SIZE: &str = "320x240";
+
+/// Retried at 720p for encoders with a larger minimum than [`PROBE_SIZE`].
+const PROBE_FALLBACK_SIZE: &str = "1280x720";
+
+/// A cold GPU driver can take seconds to initialise the first time it is
+/// asked to encode, and a probe that times out looks exactly like missing
+/// hardware to the user.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Whether a probe failed because the frame was too small for the encoder,
+/// rather than because the device is missing.
+fn is_frame_size_failure(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    [
+        "frame dimension",
+        "frame dimensions",
+        "width or height",
+        "invalid resolution",
+        "unsupported resolution",
+        "picture size",
+        "too small",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 /// Error message used when a job was cancelled rather than failing.
@@ -727,6 +779,22 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_too_small_for_the_encoder_is_not_a_missing_device() {
+        assert!(is_frame_size_failure(
+            "[h264_nvenc @ 0x1] InitializeEncoder failed: invalid param (8):              Frame Dimension less than the minimum supported value."
+        ));
+        assert!(is_frame_size_failure(
+            "[hevc_nvenc @ 0x1] Frame dimensions are less than the minimum supported value."
+        ));
+        assert!(!is_frame_size_failure(
+            "[av1_nvenc @ 0x1] No capable devices found"
+        ));
+        assert!(!is_frame_size_failure(
+            "[h264_qsv @ 0x1] Error creating a MFX session: -9."
+        ));
+    }
+
+    #[test]
     fn progress_lines_are_parsed_against_the_duration() {
         assert_eq!(
             parse_progress_line("out_time_us=5000000", Some(10.0)),
@@ -740,3 +808,4 @@ mod tests {
         assert_eq!(parse_progress_line("out_time_us=5000000", None), None);
     }
 }
+

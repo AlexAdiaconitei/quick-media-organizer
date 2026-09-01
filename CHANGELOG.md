@@ -53,6 +53,12 @@ entries out of `Unreleased` and into a `## [x.y.z]` section.
 - The video encoder dropdown now lists hardware encoders that were detected but
   cannot be used, together with the reason, instead of hiding them. A machine
   with a GPU no longer looks like it only has a CPU encoder.
+- Hardware encoders are no longer reported as unavailable on computers that do
+  have them. The detection probe encoded a 64x64 frame, which is below the
+  minimum frame size NVENC, Quick Sync and AMF accept, so every GPU failed the
+  check. The probe now uses a frame large enough for all of them, retries at
+  720p for encoders with a higher minimum, and waits longer for a cold GPU
+  driver to initialise.
 - Fixed arrow-key navigation being swallowed by the focused rename field.
 - Fixed the progress counter not decreasing when navigating backwards.
 - Moved toasts clear of the toolbar buttons and made every toast dismissible.
