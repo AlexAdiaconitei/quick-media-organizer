@@ -410,12 +410,15 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Whether a probe failed because the frame was too small for the encoder,
 /// rather than because the device is missing.
+///
+/// Only wording specific to the frame size counts. ffmpeg follows every failed
+/// encoder open with "maybe incorrect parameters such as bit_rate, rate, width
+/// or height", so matching that line would retry every missing device too.
 fn is_frame_size_failure(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
     [
         "frame dimension",
-        "frame dimensions",
-        "width or height",
+        "minimum supported value",
         "invalid resolution",
         "unsupported resolution",
         "picture size",
@@ -780,15 +783,21 @@ mod tests {
 
     #[test]
     fn a_frame_too_small_for_the_encoder_is_not_a_missing_device() {
-        assert!(is_frame_size_failure(
-            "[h264_nvenc @ 0x1] InitializeEncoder failed: invalid param (8):              Frame Dimension less than the minimum supported value."
-        ));
+        assert!(is_frame_size_failure(concat!(
+            "[h264_nvenc @ 0x1] InitializeEncoder failed: invalid param (8): ",
+            "Frame Dimension less than the minimum supported value."
+        )));
         assert!(is_frame_size_failure(
             "[hevc_nvenc @ 0x1] Frame dimensions are less than the minimum supported value."
         ));
-        assert!(!is_frame_size_failure(
-            "[av1_nvenc @ 0x1] No capable devices found"
-        ));
+        // ffmpeg prints this after any failed encoder open, so a missing
+        // device must not be mistaken for an undersized frame.
+        assert!(!is_frame_size_failure(concat!(
+            "[av1_nvenc @ 0x1] No capable devices found
+",
+            "[vost#0:0/av1_nvenc @ 0x2] Error while opening encoder - maybe incorrect ",
+            "parameters such as bit_rate, rate, width or height."
+        )));
         assert!(!is_frame_size_failure(
             "[h264_qsv @ 0x1] Error creating a MFX session: -9."
         ));
@@ -808,4 +817,3 @@ mod tests {
         assert_eq!(parse_progress_line("out_time_us=5000000", None), None);
     }
 }
-
