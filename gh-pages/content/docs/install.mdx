@@ -1,0 +1,62 @@
+---
+title: Install
+description: Standard or Lite, the first-launch warnings, and FFmpeg.
+---
+
+Downloads live on the project's <ReleasesLink>GitHub Releases page</ReleasesLink>.
+macOS gets a `.dmg`, Windows gets an `.msi` and an `.exe`.
+
+## Standard or Lite
+
+Every release ships both. They are the same application; the difference is
+whether FFmpeg travels with it.
+
+| | Windows setup size | FFmpeg |
+|---|---|---|
+| **Standard** | ~57 MB | Included. Nothing else to install. |
+| **Lite** (`-lite`) | ~5 MB | You install it yourself. |
+
+Renaming, moving and deleting work in both builds. [Video
+trimming](/docs/video-trim) and [batch optimize](/docs/batch) call FFmpeg, so on
+Lite you need it on your `PATH`:
+
+```bash
+winget install Gyan.FFmpeg    # Windows
+brew install ffmpeg           # macOS
+apt install ffmpeg            # Linux
+```
+
+Reopen the app afterwards. A bundled copy always wins over one found on your
+`PATH`, since it is the build the app was tested against.
+
+<Callout title="Why FFmpeg is a separate program">
+FFmpeg is GPL-licensed. The app invokes it as a subprocess rather than linking
+it, which is what keeps this project MIT. The Standard installer carries
+`FFMPEG-LICENSE.txt` alongside it.
+</Callout>
+
+## First launch on an unsigned build
+
+Releases are not code-signed, so both systems will stop you once.
+
+| OS | What you see | What to do |
+|----|--------------|------------|
+| **macOS** | "Unidentified developer" | Right-click the app → **Open** → confirm once |
+| **Windows** | SmartScreen warning | **More info** → **Run anyway** |
+
+## Updates
+
+The app checks its own repository's releases on launch and shows you the release
+notes before installing anything. Nothing points at a fixed repository: the
+update endpoint is written at build time from `GITHUB_REPOSITORY`, so a fork
+updates from its own releases.
+
+## Building from source
+
+Requires [Node.js](https://nodejs.org/) 22.13+, [Rust](https://rustup.rs/) and
+[pnpm](https://pnpm.io/) (`corepack enable`).
+
+<CloneCommand />
+
+`pnpm build` produces the Lite installer. `pnpm build:full` downloads FFmpeg
+first and produces the Standard one.

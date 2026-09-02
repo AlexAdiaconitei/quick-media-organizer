@@ -5,6 +5,11 @@ entries out of `Unreleased` and into a `## [x.y.z]` section.
 
 ## [Unreleased]
 
+### Added
+
+- Added a landing page and documentation site, published to GitHub Pages from
+  `gh-pages/` and linked from the README.
+
 ## [0.2.0] - 2026-08-29
 
 ### Added

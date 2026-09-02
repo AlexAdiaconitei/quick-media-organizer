@@ -1,0 +1,82 @@
+name: Docs site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gh-pages/**'
+      - '.github/workflows/docs.yml'
+  # The contributor list is read at build time, so the site is rebuilt on a
+  # schedule to pick up people who joined since the last docs change.
+  schedule:
+    - cron: '30 6 * * 1'
+  # Lets you republish without a content change, e.g. after enabling Pages.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A newer push should win; a deploy already in flight is left to finish so the
+# site is never served half-swapped.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: gh-pages
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/setup@v1
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Outputs base_path: '/quick-media-organizer' for a project site, or ''
+      # when the repository is a user site or has a custom domain. A fork gets
+      # its own value without editing anything.
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v6
+
+      - name: Build the static site
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          # Download links and the contributor list follow whichever repository
+          # is building, so a fork's site never points at the upstream one.
+          NEXT_PUBLIC_REPO_SLUG: ${{ github.repository }}
+          # Lifts the contributors API off the shared, unauthenticated rate
+          # limit that Actions runners share.
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # Pages does not run Jekyll on artifact deployments, but this keeps the
+      # underscore-prefixed _next/ directory safe if that ever changes.
+      - name: Disable Jekyll
+        run: touch out/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: gh-pages/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

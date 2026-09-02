@@ -1,0 +1,79 @@
+---
+title: Getting started
+description: What the app does, and the first five minutes with it.
+---
+
+Quick Media Organizer is a desktop app for one job: getting a folder of
+`IMG_1234`-style phone files into names and folders you can actually search,
+fast, without a mouse.
+
+It is not a photo library. It never imports, never builds a catalogue, and never
+uploads anything. It opens a folder you point it at, shows you one file at a
+time, and writes your changes straight to disk.
+
+## The first five minutes
+
+<Steps>
+
+<Step>
+
+### Open a folder
+
+Point it at a phone backup, a camera dump, or `Downloads`. It picks up photos
+and videos in that folder. Files in subfolders are skipped unless you turn on
+**Include subfolders** in Options (<Key>Ctrl+O</Key>).
+
+</Step>
+
+<Step>
+
+### Type a name and press Enter
+
+The first file fills the screen. Type what it is and press <Key>Enter</Key>. The
+file is renamed on disk and the next one loads.
+
+</Step>
+
+<Step>
+
+### Send the next ones into a folder
+
+Press <Key>Ctrl+F</Key>, type `trips/portugal` and confirm. A banner appears and
+every <Key>Enter</Key> from now on renames *and* moves into that folder. <Key>Esc</Key>
+clears it.
+
+</Step>
+
+<Step>
+
+### Get rid of the bad ones
+
+<Key>Ctrl+D</Key> moves the file to `_deleted/` inside your folder. It is a move,
+not a deletion, and <Key>Ctrl+Z</Key> undoes it.
+
+</Step>
+
+</Steps>
+
+<Shot
+  src="/screenshots/welcome.png"
+  alt="The welcome screen, listing the three steps and the folder picker"
+  caption="The welcome screen. Tick 'Don't show again' once you know the keys."
+  width={2200}
+  height={1514}
+/>
+
+## What it will not do
+
+- It does not move or copy anything outside the folder you opened.
+- It does not touch file contents when renaming or moving, so capture dates and
+  EXIF stay exactly as they were.
+- It does not delete anything permanently. `_deleted/` is a normal folder you can
+  open, inspect and empty yourself.
+
+## Where to go next
+
+- [Install](/docs/install) covers the Standard and Lite builds, and the FFmpeg
+  requirement for trimming and batch work.
+- [Keyboard reference](/docs/keyboard) is the full key list.
+- [Batch optimize](/docs/batch) is the part that reclaims disk space.

@@ -12,32 +12,17 @@
  * just without the in-app updater.
  */
 
-import { execFileSync } from "node:child_process";
 import { rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { repositorySlug } from "./repo-slug.mjs";
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = join(ROOT, "src-tauri", "tauri.updater.conf.json");
 
-export function repositorySlugFromRemote(remote) {
-  const match = remote.match(/github\.com[:/]([^/]+)\/([^/]+?)(\.git)?$/);
-  if (!match) {
-    throw new Error(`Cannot work out the GitHub repository from "${remote}"`);
-  }
-  return `${match[1]}/${match[2]}`;
-}
-
-function repositorySlug() {
-  if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY;
-
-  const remote = execFileSync("git", ["remote", "get-url", "origin"], {
-    cwd: ROOT,
-    encoding: "utf8",
-  }).trim();
-
-  return repositorySlugFromRemote(remote);
-}
+// Re-exported because this module used to own it and the tests import it here.
+export { repositorySlugFromRemote } from "./repo-slug.mjs";
 
 export function updaterSigningMode(publicKey, privateKey) {
   const hasPublicKey = Boolean(publicKey?.trim());

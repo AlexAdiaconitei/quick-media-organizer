@@ -3,11 +3,19 @@ name: CI
 permissions:
   contents: read
 
+# The docs site is a separate project with its own workflow, so a change that
+# only touches it does not need the Tauri build matrix.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'gh-pages/**'
+      - '.github/workflows/docs.yml'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'gh-pages/**'
+      - '.github/workflows/docs.yml'
 
 jobs:
   check:

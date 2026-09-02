@@ -1,0 +1,60 @@
+---
+title: Renaming and folders
+description: Folder mode, Live Photo pairs, subfolders and what happens to duplicate names.
+---
+
+The workspace shows one file at a time: the preview on the left, the name field
+and the shortcut list on the right.
+
+<Shot
+  src="/screenshots/workspace.png"
+  alt="The photo workspace with the rename field, metadata and the shortcut list"
+  caption="Folder mode is armed here — the banner names the target and Esc cancels it."
+  width={2640}
+  height={2240}
+/>
+
+## Renaming
+
+Type a name and press <Key>Enter</Key>. The extension is kept; you only ever type
+the stem. If the name you chose is already taken in the destination, the app
+appends `_001` (then `_002`, and so on) and the toast tells you what it
+settled on rather than overwriting anything.
+
+Pressing <Key>Enter</Key> on an empty field does nothing except remind you to type
+something — unless a folder is armed, in which case the file moves under its
+original name.
+
+## Folder mode
+
+<Key>Ctrl+F</Key> opens the folder picker. Type a path (`gym`,
+`trips/portugal/algarve`, `paperwork`) and confirm. Two things happen:
+
+- A banner appears naming the armed folder.
+- Every <Key>Enter</Key> from then on renames *and* moves into it.
+
+The folder is created on first use, nested paths included. It stays armed until
+you press <Key>Esc</Key> or arm a different one, which is the point: a run of
+thirty holiday photos is one <Key>Ctrl+F</Key> and thirty <Key>Enter</Key>s.
+
+## Live Photos
+
+An iPhone Live Photo is two files, a `.heic` and a `.mov` with the same stem.
+The app treats the pair as one item: renaming, moving and deleting apply to both,
+so the pair never gets separated by a half-finished session.
+
+## Subfolders
+
+By default only the folder you opened is scanned. If it contains subfolders with
+media in them, a notice tells you how many files are being left out, and
+**Include subfolders** in Options (<Key>Ctrl+O</Key>) pulls them into the queue.
+
+`_deleted/` and the app's own `.quick-media-organizer/` folder are always
+skipped, so the app never re-offers files it has already put away.
+
+## Dates and EXIF
+
+Renaming and moving do not rewrite file contents. The capture date, the EXIF
+block and the filesystem timestamps come out of a session exactly as they went
+in. The only place bytes are rewritten is [batch
+optimize](/docs/batch), which copies the EXIF block across explicitly.

@@ -1,0 +1,7 @@
+# Keeps this site out of the desktop app's install. pnpm stops walking up the
+# tree when it finds this file, so `pnpm install` here resolves only the docs
+# dependencies and never touches the Tauri project's lockfile.
+packages: []
+savePrefix: ""
+allowBuilds:
+  esbuild: true

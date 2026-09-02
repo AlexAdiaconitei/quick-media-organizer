@@ -2,9 +2,14 @@
 
 **Organize thousands of phone photos and videos with your keyboard — no mouse required.**
 
+<!-- badges:start -->
+[![Documentation](https://img.shields.io/badge/docs-website-d4cfc7?style=flat&labelColor=101014)](https://alexadiaconitei.github.io/quick-media-organizer/)
+[![Latest release](https://img.shields.io/github/v/release/AlexAdiaconitei/quick-media-organizer?style=flat&labelColor=101014&color=d4cfc7)](../../releases/latest)
+[![CI](https://github.com/AlexAdiaconitei/quick-media-organizer/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
 ![MIT License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 ![Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange)
+<!-- badges:end -->
 
 [🇪🇸 Leer en español](README.es.md)
 
@@ -249,12 +254,16 @@ and the signed artifacts.
 Requirements: [Node.js](https://nodejs.org/) 22.13+, [Rust](https://rustup.rs/),
 [pnpm](https://pnpm.io/) (`corepack enable`)
 
+<!-- clone:start -->
+Clone and run it locally:
+
 ```bash
 git clone https://github.com/AlexAdiaconitei/quick-media-organizer.git
 cd quick-media-organizer
 pnpm install
-pnpm dev            # starts the desktop app
+pnpm dev
 ```
+<!-- clone:end -->
 
 | Command | What it does |
 |---|---|
@@ -265,6 +274,22 @@ pnpm dev            # starts the desktop app
 | `pnpm build:full` | Downloads FFmpeg and builds the standard installer |
 | `pnpm fetch-ffmpeg` | Only fetches FFmpeg into `src-tauri/binaries` |
 | `cargo test` (in `src-tauri`) | Rust tests; the FFmpeg ones skip themselves if it is missing |
+
+---
+
+## Contributors
+
+Everyone whose commits are in this repository, newest release included. The
+list is rebuilt by [a workflow](.github/workflows/readme.yml), so merging a pull
+request is all it takes to appear here.
+
+<!-- contributors:start -->
+<a href="https://github.com/AlexAdiaconitei" title="AlexAdiaconitei"><img src="https://avatars.githubusercontent.com/u/37024953?v=4&s=112" width="56" height="56" alt="AlexAdiaconitei" /></a>
+<a href="https://github.com/ferran-zoundroom" title="ferran-zoundroom"><img src="https://avatars.githubusercontent.com/u/265328517?v=4&s=112" width="56" height="56" alt="ferran-zoundroom" /></a>
+<!-- contributors:end -->
+
+Pull requests are welcome. See the [contributor graph](../../graphs/contributors)
+for the full history, and [open issues](../../issues) for somewhere to start.
 
 ---
 

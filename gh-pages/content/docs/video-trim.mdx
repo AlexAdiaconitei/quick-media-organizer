@@ -1,0 +1,55 @@
+---
+title: Trimming video
+description: Lossless cuts with an FFmpeg stream copy, and where the cut actually lands.
+---
+
+Videos preview in the app and can be cut before you save them. The cut is
+lossless: FFmpeg copies the existing streams instead of re-encoding, so nothing
+is recompressed and a long clip is written in about a second.
+
+<Shot
+  src="/screenshots/workspace-video.png"
+  alt="The video workspace with the trim range markers under the player"
+  caption="The trim range is shown under the player. Enter applies it and saves."
+  width={2640}
+  height={2240}
+/>
+
+## Setting the range
+
+<Steps>
+
+<Step>
+### Mark the start
+Scrub to where the video should begin and press <Key>[</Key>.
+</Step>
+
+<Step>
+### Mark the end
+Scrub to where it should stop and press <Key>]</Key>.
+</Step>
+
+<Step>
+### Save
+<Key>Enter</Key> applies the trim and, if you typed one, the new name — in a
+single write.
+</Step>
+
+</Steps>
+
+Two ranges are refused rather than silently accepted: one shorter than the
+minimum FFmpeg can cut, and one that covers the whole video. In both cases the
+app says which it was.
+
+## Where the cut lands
+
+A stream copy cannot split a group of pictures, so the cut lands on the nearest
+keyframe rather than exactly on your marker. Expect the real start to sit a
+fraction of a second from where you put it. That is the trade for not
+re-encoding: every frame that survives is the original frame.
+
+The original is copied into `.quick-media-organizer/trim-backups/` before the cut
+is written, which is what <Key>Ctrl+Z</Key> restores from.
+
+Trimming requires FFmpeg. On the Lite build, [install it
+first](/docs/install#standard-or-lite).

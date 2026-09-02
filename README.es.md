@@ -2,9 +2,14 @@
 
 **Organiza miles de fotos y vídeos del móvil con el teclado — sin usar el ratón.**
 
-![MIT License](https://img.shields.io/badge/license-MIT-blue)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
+<!-- badges:start -->
+[![Documentación](https://img.shields.io/badge/docs-website-d4cfc7?style=flat&labelColor=101014)](https://alexadiaconitei.github.io/quick-media-organizer/)
+[![Última versión](https://img.shields.io/github/v/release/AlexAdiaconitei/quick-media-organizer?style=flat&labelColor=101014&color=d4cfc7)](../../releases/latest)
+[![CI](https://github.com/AlexAdiaconitei/quick-media-organizer/actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+![Licencia MIT](https://img.shields.io/badge/license-MIT-blue)
+![Plataformas](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 ![Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange)
+<!-- badges:end -->
 
 [🇬🇧 Read in English](README.md)
 
@@ -250,12 +255,16 @@ los artefactos firmados.
 Requisitos: [Node.js](https://nodejs.org/) 22.13+, [Rust](https://rustup.rs/),
 [pnpm](https://pnpm.io/) (`corepack enable`)
 
+<!-- clone:start -->
+Clónalo y ejecútalo en local:
+
 ```bash
 git clone https://github.com/AlexAdiaconitei/quick-media-organizer.git
 cd quick-media-organizer
 pnpm install
-pnpm dev            # abre la app de escritorio
+pnpm dev
 ```
+<!-- clone:end -->
 
 | Comando | Qué hace |
 |---|---|
@@ -266,6 +275,23 @@ pnpm dev            # abre la app de escritorio
 | `pnpm build:full` | Descarga FFmpeg y genera el instalador estándar |
 | `pnpm fetch-ffmpeg` | Solo descarga FFmpeg en `src-tauri/binaries` |
 | `cargo test` (en `src-tauri`) | Tests de Rust; los de FFmpeg se saltan si no está |
+
+---
+
+## Colaboradores
+
+Todas las personas con commits en este repositorio, incluida la última versión.
+La lista la regenera [un workflow](.github/workflows/readme.yml), así que basta
+con que se fusione un pull request para aparecer aquí.
+
+<!-- contributors:start -->
+<a href="https://github.com/AlexAdiaconitei" title="AlexAdiaconitei"><img src="https://avatars.githubusercontent.com/u/37024953?v=4&s=112" width="56" height="56" alt="AlexAdiaconitei" /></a>
+<a href="https://github.com/ferran-zoundroom" title="ferran-zoundroom"><img src="https://avatars.githubusercontent.com/u/265328517?v=4&s=112" width="56" height="56" alt="ferran-zoundroom" /></a>
+<!-- contributors:end -->
+
+Los pull requests son bienvenidos. El historial completo está en el [grafo de
+colaboradores](../../graphs/contributors), y las [incidencias
+abiertas](../../issues) son un buen sitio por donde empezar.
 
 ---
 

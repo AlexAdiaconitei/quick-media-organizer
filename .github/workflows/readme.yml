@@ -1,0 +1,53 @@
+name: README
+
+on:
+  push:
+    branches: [main]
+  # Contributor avatars and the release badge go stale on their own, without
+  # anything being pushed.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: readme
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Checked out as a branch rather than a detached SHA, so the commit
+          # below has somewhere to push to.
+          ref: ${{ github.ref_name }}
+
+      - uses: pnpm/setup@v1
+        with:
+          runtime: node@22
+          cache: false
+          install: false
+
+      # Rewrites the badge, clone and contributor blocks for whichever
+      # repository this is. A fork points them at itself on its first run.
+      - name: Regenerate the generated README blocks
+        run: node scripts/sync-readme.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Commit any change
+        run: |
+          if git diff --quiet -- README.md README.es.md; then
+            echo "READMEs are already up to date."
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md README.es.md
+          git commit -m 'docs: refresh the generated README blocks'
+          git push

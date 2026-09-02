@@ -1,0 +1,109 @@
+---
+title: Batch optimize
+description: Shrink a folder of videos and photos in one pass, with a size estimate before you commit.
+---
+
+<Key>Ctrl+B</Key> opens the batch panel. It walks three steps — select, settings,
+run — and writes its results into a new folder, leaving your originals alone
+unless you explicitly ask otherwise.
+
+## 1 · Select
+
+Pick which files take part. Videos and photos are counted separately, so you can
+re-encode a folder's clips and leave its photos untouched.
+
+<Shot
+  src="/screenshots/batch-select.png"
+  alt="The batch panel with a folder of clips and photos selected"
+  caption="Selection step, with the running total of what is included."
+  width={2200}
+  height={1514}
+/>
+
+## 2 · Settings
+
+<Shot
+  src="/screenshots/batch-settings.png"
+  alt="Batch settings: codec, quality, resolution, audio and output folder"
+  caption="Defaults: H.265 at CRF 28, capped to 1080p, AAC audio at 128 kbps."
+  width={2200}
+  height={1514}
+/>
+
+Five presets sit at the top — *Max savings · 1080p H.265*, *Balanced · H.264*,
+*Fast remux · no quality loss*, *HEIC → JPEG 90* and *Web · WebP 2560px* — and
+you can save your own settings as a named preset next to them.
+
+**Video.** H.265, H.264 or AV1, plus a remux-only *stream copy* if all you want
+is a faster-starting container. Quality is a CRF value (lower is bigger and
+better), and you can cap the height and the frame rate.
+
+**Photos.** JPEG, WebP, AVIF or PNG, at a quality of your choosing, optionally
+resized by longest edge. *Keep* re-encodes without changing the format.
+
+**Output.** By default everything lands in `_optimized/` next to the source. You
+can also send it all to one folder you choose, or replace the originals — that
+last one needs a separate confirmation and keeps a backup unless you turn the
+backup off.
+
+**Safety valve.** Files whose converted version comes out larger than the
+original are skipped and reported as skipped, rather than quietly making your
+folder bigger.
+
+## The size estimate
+
+Before the run starts, the app encodes a handful of real samples with your exact
+settings: up to three three-second slices of video, and up to five of the photos.
+The predicted output size is extrapolated from those. It is a measurement of
+your files, not a lookup table, which is why it is worth the few seconds it
+takes.
+
+## Hardware encoding
+
+With **Auto** acceleration the app probes the machine and uses NVENC, Quick
+Sync, AMF, VideoToolbox or VAAPI when the device and the FFmpeg build both
+support the codec you picked. You can also pin a specific backend, or force
+software encoding.
+
+<Callout title="A failed GPU job is not a failed batch">
+If a hardware encode fails partway, that file is retried on the CPU and the
+fallback is recorded in the report. You end up with the file either way, and you
+can see which ones took the slow path.
+</Callout>
+
+## Running, and surviving a crash
+
+<Shot
+  src="/screenshots/batch-progress.png"
+  alt="A batch job in progress, showing the current file and overall progress"
+  caption="Progress is per file and overall. The job keeps going in the background."
+  width={2200}
+  height={1514}
+/>
+
+Every completed file is checkpointed. If the app closes mid-run — crash, reboot,
+impatience — the next launch keeps the finished results, deletes the incomplete
+temporary output, and restarts only what was still pending.
+
+## The report
+
+<Shot
+  src="/screenshots/batch-done.png"
+  alt="Finished batch job showing the space saved per file"
+  caption="927.3 MB down to 243.9 MB across twelve files, with the one skip named."
+  width={2200}
+  height={1514}
+/>
+
+Each row shows the original size, the new size, and the outcome. Skipped and
+failed files are named rather than summarised, so you can go and look at them.
+
+## Dates and EXIF
+
+Batch conversion is the one place the app rewrites file contents, so the EXIF
+block is copied across explicitly. That works for JPEG, PNG and WebP output.
+AVIF has nowhere to put it, and the settings panel says so before you start.
+File timestamps are reapplied to the converted copy either way.
+
+Batch optimize requires FFmpeg. On the Lite build, [install it
+first](/docs/install).

@@ -1,0 +1,45 @@
+---
+title: Deleting and undo
+description: Where deleted files go, how far undo reaches, and what the app writes into your folder.
+---
+
+The app is designed to be used fast, which only works if being wrong is cheap.
+
+## Delete is a move
+
+<Key>Ctrl+D</Key> moves the file into `_deleted/` inside the folder you opened.
+Not the system Trash. Not gone. It is a normal folder you can open in Explorer or
+Finder, sort by date, and empty yourself when you are sure.
+
+The toast says so every time: *Moved to _deleted (not system Trash). Press Undo
+to restore.*
+
+A Live Photo pair goes together. If a file of the same name is already sitting in
+`_deleted/`, the new one gets a suffix rather than replacing it.
+
+## Undo
+
+<Key>Ctrl+Z</Key> steps back through the session: renames, moves, deletes and
+video trims. A trim is undone from the copy of the original that was written to
+`.quick-media-organizer/trim-backups/` before the cut.
+
+History is finite. When an action falls off the end, the app tells you it can no
+longer be undone rather than pretending to work.
+
+## What the app writes into your folder
+
+| Path | What it is |
+|---|---|
+| `_deleted/` | Files you removed with <Key>Ctrl+D</Key> |
+| `_optimized/` | Default output of [batch optimize](/docs/batch) |
+| `.quick-media-organizer/` | Session state, batch checkpoints, trim backups |
+
+Both `_deleted/` and `.quick-media-organizer/` are skipped when the queue is
+built, so nothing you have already put away comes back around.
+
+## Resuming
+
+Closing the app mid-folder is fine. On the next launch it reopens the last
+folder and offers to continue where you stopped. If the file you were on has been
+renamed or moved in the meantime, it says so and starts from the beginning
+instead of guessing.
